@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,21 +11,20 @@ namespace Jellyfin.Extensions.Json.Converters
     {
         /// <inheritdoc />
         public override Guid? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-        {
-            var guidStr = reader.GetString();
-            return guidStr == null ? null : new Guid(guidStr);
-        }
+            => JsonGuidConverter.ReadInternal(ref reader);
 
         /// <inheritdoc />
         public override void Write(Utf8JsonWriter writer, Guid? value, JsonSerializerOptions options)
         {
-            if (value == null || value == Guid.Empty)
+            // null got handled higher up the call stack
+            var val = value!.Value;
+            if (val.IsEmpty())
             {
                 writer.WriteNullValue();
             }
             else
             {
-                writer.WriteStringValue(value.Value.ToString("N", CultureInfo.InvariantCulture));
+                JsonGuidConverter.WriteInternal(writer, val);
             }
         }
     }

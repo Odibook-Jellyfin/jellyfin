@@ -8,6 +8,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Jellyfin.Data.Enums;
+using Jellyfin.Extensions;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -43,7 +44,7 @@ namespace MediaBrowser.Controller.LiveTv
         public override LocationType LocationType => LocationType.Remote;
 
         [JsonIgnore]
-        public override string MediaType => ChannelType == ChannelType.Radio ? Model.Entities.MediaType.Audio : Model.Entities.MediaType.Video;
+        public override MediaType MediaType => ChannelType == ChannelType.Radio ? MediaType.Audio : MediaType.Video;
 
         [JsonIgnore]
         public bool IsMovie { get; set; }
@@ -74,7 +75,7 @@ namespace MediaBrowser.Controller.LiveTv
         /// </summary>
         /// <value><c>true</c> if this instance is kids; otherwise, <c>false</c>.</value>
         [JsonIgnore]
-        public bool IsKids => Tags.Contains("Kids", StringComparer.OrdinalIgnoreCase);
+        public bool IsKids => Tags.Contains("Kids", StringComparison.OrdinalIgnoreCase);
 
         [JsonIgnore]
         public bool IsRepeat { get; set; }
@@ -105,14 +106,9 @@ namespace MediaBrowser.Controller.LiveTv
 
         protected override string CreateSortName()
         {
-            if (!string.IsNullOrEmpty(Number))
+            if (double.TryParse(Number, CultureInfo.InvariantCulture, out double number))
             {
-                double number = 0;
-
-                if (double.TryParse(Number, NumberStyles.Any, CultureInfo.InvariantCulture, out number))
-                {
-                    return string.Format(CultureInfo.InvariantCulture, "{0:00000.0}", number) + "-" + (Name ?? string.Empty);
-                }
+                return string.Format(CultureInfo.InvariantCulture, "{0:00000.0}", number) + "-" + (Name ?? string.Empty);
             }
 
             return (Number ?? string.Empty) + "-" + (Name ?? string.Empty);
@@ -124,9 +120,7 @@ namespace MediaBrowser.Controller.LiveTv
         }
 
         public IEnumerable<BaseItem> GetTaggedItems()
-        {
-            return new List<BaseItem>();
-        }
+            => Enumerable.Empty<BaseItem>();
 
         public override List<MediaSourceInfo> GetMediaSources(bool enablePathSubstitution)
         {
@@ -136,12 +130,12 @@ namespace MediaBrowser.Controller.LiveTv
             {
                 Id = Id.ToString("N", CultureInfo.InvariantCulture),
                 Protocol = PathProtocol ?? MediaProtocol.File,
-                MediaStreams = new List<MediaStream>(),
+                MediaStreams = Array.Empty<MediaStream>(),
                 Name = Name,
                 Path = Path,
                 RunTimeTicks = RunTimeTicks,
                 Type = MediaSourceType.Placeholder,
-                IsInfiniteStream = RunTimeTicks == null
+                IsInfiniteStream = RunTimeTicks is null
             };
 
             list.Add(info);

@@ -6,6 +6,7 @@ using Emby.Server.Implementations.Data;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using Xunit;
 
@@ -27,8 +28,18 @@ namespace Jellyfin.Server.Implementations.Tests.Data
             appHost.Setup(x => x.ReverseVirtualPath(It.IsAny<string>()))
                 .Returns((string x) => x.Replace(MetaDataPath, VirtualMetaDataPath, StringComparison.Ordinal));
 
+            var configSection = new Mock<IConfigurationSection>();
+            configSection
+                .SetupGet(x => x[It.Is<string>(s => s == MediaBrowser.Controller.Extensions.ConfigurationExtensions.SqliteCacheSizeKey)])
+                .Returns("0");
+            var config = new Mock<IConfiguration>();
+            config
+                .Setup(x => x.GetSection(It.Is<string>(s => s == MediaBrowser.Controller.Extensions.ConfigurationExtensions.SqliteCacheSizeKey)))
+                .Returns(configSection.Object);
+
             _fixture = new Fixture().Customize(new AutoMoqCustomization { ConfigureMembers = true });
             _fixture.Inject(appHost);
+            _fixture.Inject(config);
             _sqliteItemRepository = _fixture.Create<SqliteItemRepository>();
         }
 
@@ -173,7 +184,7 @@ namespace Jellyfin.Server.Implementations.Tests.Data
                 "/mnt/series/Family Guy/Season 1/Family Guy - S01E01-thumb.jpg*637452096478512963*Primary*1920*1080*WjQbtJtSO8nhNZ%L_Io#R/oaS6o}-;adXAoIn7j[%hW9s:WGw[nN|test|1234||ss",
                 new ItemImageInfo[]
                 {
-                    new ()
+                    new()
                     {
                         Path = "/mnt/series/Family Guy/Season 1/Family Guy - S01E01-thumb.jpg",
                         Type = ImageType.Primary,
@@ -282,7 +293,7 @@ namespace Jellyfin.Server.Implementations.Tests.Data
             Assert.Equal(expected, SqliteItemRepository.SerializeProviderIds(values));
         }
 
-        private class ProviderIdsExtensionsTestsObject : IHasProviderIds
+        private sealed class ProviderIdsExtensionsTestsObject : IHasProviderIds
         {
             public Dictionary<string, string> ProviderIds { get; set; } = new Dictionary<string, string>();
         }

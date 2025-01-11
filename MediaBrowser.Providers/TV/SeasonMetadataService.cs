@@ -1,5 +1,3 @@
-#pragma warning disable CS1591
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,8 +13,19 @@ using Microsoft.Extensions.Logging;
 
 namespace MediaBrowser.Providers.TV
 {
+    /// <summary>
+    /// Service to manage season metadata.
+    /// </summary>
     public class SeasonMetadataService : MetadataService<Season, SeasonInfo>
     {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="SeasonMetadataService"/> class.
+        /// </summary>
+        /// <param name="serverConfigurationManager">Instance of the <see cref="IServerConfigurationManager"/> interface.</param>
+        /// <param name="logger">Instance of the <see cref="ILogger{SeasonMetadataService}"/> interface.</param>
+        /// <param name="providerManager">Instance of the <see cref="IProviderManager"/> interface.</param>
+        /// <param name="fileSystem">Instance of the <see cref="IFileSystem"/> interface.</param>
+        /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
         public SeasonMetadataService(
             IServerConfigurationManager serverConfigurationManager,
             ILogger<SeasonMetadataService> logger,
@@ -35,7 +44,7 @@ namespace MediaBrowser.Providers.TV
         {
             var updatedType = base.BeforeSaveInternal(item, isFullRefresh, updateType);
 
-            if (item.IndexNumber.HasValue && item.IndexNumber.Value == 0)
+            if (item.IndexNumber == 0 && !item.IsLocked && !item.LockedFields.Contains(MetadataField.Name))
             {
                 var seasonZeroDisplayName = LibraryManager.GetLibraryOptions(item).SeasonZeroDisplayName;
 
@@ -85,12 +94,6 @@ namespace MediaBrowser.Providers.TV
             }
 
             return updateType;
-        }
-
-        /// <inheritdoc />
-        protected override void MergeData(MetadataResult<Season> source, MetadataResult<Season> target, MetadataField[] lockedFields, bool replaceData, bool mergeMetadataSettings)
-        {
-            ProviderUtils.MergeBaseItemData(source, target, lockedFields, replaceData, mergeMetadataSettings);
         }
 
         private ItemUpdateType SaveIsVirtualItem(Season item, IList<BaseItem> episodes)

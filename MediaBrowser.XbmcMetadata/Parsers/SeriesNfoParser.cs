@@ -1,7 +1,9 @@
-using System;
+using System.Globalization;
 using System.Xml;
+using Emby.Naming.TV;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Extensions;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
@@ -46,70 +48,49 @@ namespace MediaBrowser.XbmcMetadata.Parsers
             {
                 case "id":
                     {
-                        string? imdbId = reader.GetAttribute("IMDB");
-                        string? tmdbId = reader.GetAttribute("TMDB");
-                        string? tvdbId = reader.GetAttribute("TVDB");
+                        item.TrySetProviderId(MetadataProvider.Imdb, reader.GetAttribute("IMDB"));
+                        item.TrySetProviderId(MetadataProvider.Tmdb, reader.GetAttribute("TMDB"));
 
+                        string? tvdbId = reader.GetAttribute("TVDB");
                         if (string.IsNullOrWhiteSpace(tvdbId))
                         {
                             tvdbId = reader.ReadElementContentAsString();
                         }
 
-                        if (!string.IsNullOrWhiteSpace(imdbId))
-                        {
-                            item.SetProviderId(MetadataProvider.Imdb, imdbId);
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(tmdbId))
-                        {
-                            item.SetProviderId(MetadataProvider.Tmdb, tmdbId);
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(tvdbId))
-                        {
-                            item.SetProviderId(MetadataProvider.Tvdb, tvdbId);
-                        }
+                        item.TrySetProviderId(MetadataProvider.Tvdb, tvdbId);
 
                         break;
                     }
 
                 case "airs_dayofweek":
-                    {
-                        item.AirDays = TVUtils.GetAirDays(reader.ReadElementContentAsString());
-                        break;
-                    }
-
+                    item.AirDays = TVUtils.GetAirDays(reader.ReadElementContentAsString());
+                    break;
                 case "airs_time":
-                    {
-                        var val = reader.ReadElementContentAsString();
-
-                        if (!string.IsNullOrWhiteSpace(val))
-                        {
-                            item.AirTime = val;
-                        }
-
-                        break;
-                    }
-
+                    item.AirTime = reader.ReadNormalizedString();
+                    break;
                 case "status":
                     {
                         var status = reader.ReadElementContentAsString();
 
                         if (!string.IsNullOrWhiteSpace(status))
                         {
-                            if (Enum.TryParse(status, true, out SeriesStatus seriesStatus))
+                            if (TvParserHelpers.TryParseSeriesStatus(status, out var seriesStatus))
                             {
                                 item.Status = seriesStatus;
                             }
                             else
                             {
-                                Logger.LogInformation("Unrecognized series status: " + status);
+                                Logger.LogInformation("Unrecognized series status: {Status}", status);
                             }
                         }
 
                         break;
                     }
 
+                // Season names are processed by SeriesNfoSeasonParser
+                case "namedseason":
+                    reader.Skip();
+                    break;
                 default:
                     base.FetchDataFromXmlNode(reader, itemResult);
                     break;

@@ -1,5 +1,3 @@
-#pragma warning disable CS1591
-
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -11,42 +9,52 @@ using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
-using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 
 namespace MediaBrowser.Providers.Plugins.Tmdb.TV
 {
+    /// <summary>
+    /// TV series image provider powered by TheMovieDb.
+    /// </summary>
     public class TmdbSeriesImageProvider : IRemoteImageProvider, IHasOrder
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly TmdbClientManager _tmdbClientManager;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TmdbSeriesImageProvider"/> class.
+        /// </summary>
+        /// <param name="httpClientFactory">The <see cref="IHttpClientFactory"/>.</param>
+        /// <param name="tmdbClientManager">The <see cref="TmdbClientManager"/>.</param>
         public TmdbSeriesImageProvider(IHttpClientFactory httpClientFactory, TmdbClientManager tmdbClientManager)
         {
             _httpClientFactory = httpClientFactory;
             _tmdbClientManager = tmdbClientManager;
         }
 
+        /// <inheritdoc />
         public string Name => TmdbUtils.ProviderName;
 
-        // After tvdb and fanart
+        /// <inheritdoc />
         public int Order => 2;
 
+        /// <inheritdoc />
         public bool Supports(BaseItem item)
         {
             return item is Series;
         }
 
-        public IEnumerable<ImageType> GetSupportedImages(BaseItem item)
-        {
-            return new List<ImageType>
-            {
-                ImageType.Primary,
-                ImageType.Backdrop
-            };
-        }
+        /// <inheritdoc />
+        public IEnumerable<ImageType> GetSupportedImages(BaseItem item) =>
+        [
+            ImageType.Primary,
+            ImageType.Backdrop,
+            ImageType.Logo,
+            ImageType.Thumb
+        ];
 
+        /// <inheritdoc />
         public async Task<IEnumerable<RemoteImageInfo>> GetImages(BaseItem item, CancellationToken cancellationToken)
         {
             var tmdbId = item.GetProviderId(MetadataProvider.Tmdb);
@@ -63,52 +71,24 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                 .GetSeriesAsync(Convert.ToInt32(tmdbId, CultureInfo.InvariantCulture), null, null, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (series?.Images == null)
+            if (series?.Images is null)
             {
                 return Enumerable.Empty<RemoteImageInfo>();
             }
 
             var posters = series.Images.Posters;
             var backdrops = series.Images.Backdrops;
+            var logos = series.Images.Logos;
+            var remoteImages = new List<RemoteImageInfo>(posters.Count + backdrops.Count + logos.Count);
 
-            var remoteImages = new RemoteImageInfo[posters.Count + backdrops.Count];
-
-            for (var i = 0; i < posters.Count; i++)
-            {
-                var poster = posters[i];
-                remoteImages[i] = new RemoteImageInfo
-                {
-                    Url = _tmdbClientManager.GetPosterUrl(poster.FilePath),
-                    CommunityRating = poster.VoteAverage,
-                    VoteCount = poster.VoteCount,
-                    Width = poster.Width,
-                    Height = poster.Height,
-                    Language = TmdbUtils.AdjustImageLanguage(poster.Iso_639_1, language),
-                    ProviderName = Name,
-                    Type = ImageType.Primary,
-                    RatingType = RatingType.Score
-                };
-            }
-
-            for (var i = 0; i < backdrops.Count; i++)
-            {
-                var backdrop = series.Images.Backdrops[i];
-                remoteImages[posters.Count + i] = new RemoteImageInfo
-                {
-                    Url = _tmdbClientManager.GetBackdropUrl(backdrop.FilePath),
-                    CommunityRating = backdrop.VoteAverage,
-                    VoteCount = backdrop.VoteCount,
-                    Width = backdrop.Width,
-                    Height = backdrop.Height,
-                    ProviderName = Name,
-                    Type = ImageType.Backdrop,
-                    RatingType = RatingType.Score
-                };
-            }
+            remoteImages.AddRange(_tmdbClientManager.ConvertPostersToRemoteImageInfo(posters, language));
+            remoteImages.AddRange(_tmdbClientManager.ConvertBackdropsToRemoteImageInfo(backdrops, language));
+            remoteImages.AddRange(_tmdbClientManager.ConvertLogosToRemoteImageInfo(logos, language));
 
             return remoteImages;
         }
 
+        /// <inheritdoc />
         public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
         {
             return _httpClientFactory.CreateClient(NamedClient.Default).GetAsync(url, cancellationToken);
