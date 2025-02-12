@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Jellyfin.Extensions;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
@@ -31,6 +32,7 @@ namespace MediaBrowser.LocalMetadata.Images
             "folder",
             "poster",
             "cover",
+            "jacket",
             "default"
         };
 
@@ -93,7 +95,7 @@ namespace MediaBrowser.LocalMetadata.Images
             {
                 var season = item as Season;
                 var series = season?.Series;
-                if (series != null && series.IsFileProtocol)
+                if (series is not null && series.IsFileProtocol)
                 {
                     return true;
                 }
@@ -117,16 +119,10 @@ namespace MediaBrowser.LocalMetadata.Images
                 return Enumerable.Empty<FileSystemMetadata>();
             }
 
-            if (includeDirectories)
-            {
-                return directoryService.GetFileSystemEntries(path)
-                .Where(i => BaseItem.SupportedImageExtensions.Contains(i.Extension, StringComparer.OrdinalIgnoreCase) || i.IsDirectory)
-
-                .OrderBy(i => Array.IndexOf(BaseItem.SupportedImageExtensions, i.Extension ?? string.Empty));
-            }
-
-            return directoryService.GetFiles(path)
-                .Where(i => BaseItem.SupportedImageExtensions.Contains(i.Extension, StringComparer.OrdinalIgnoreCase))
+            return directoryService.GetFileSystemEntries(path)
+                .Where(i =>
+                    (includeDirectories && i.IsDirectory)
+                    || BaseItem.SupportedImageExtensions.Contains(i.Extension, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(i => Array.IndexOf(BaseItem.SupportedImageExtensions, i.Extension ?? string.Empty));
         }
 
@@ -201,7 +197,7 @@ namespace MediaBrowser.LocalMetadata.Images
                 added = AddImage(files, images, "logo", imagePrefix, isInMixedFolder, ImageType.Logo);
                 if (!added)
                 {
-                    added = AddImage(files, images, "clearlogo", imagePrefix, isInMixedFolder, ImageType.Logo);
+                    AddImage(files, images, "clearlogo", imagePrefix, isInMixedFolder, ImageType.Logo);
                 }
             }
 
@@ -218,7 +214,7 @@ namespace MediaBrowser.LocalMetadata.Images
 
                 if (!added)
                 {
-                    added = AddImage(files, images, "disc", imagePrefix, isInMixedFolder, ImageType.Disc);
+                    AddImage(files, images, "disc", imagePrefix, isInMixedFolder, ImageType.Disc);
                 }
             }
             else if (item is Video || item is BoxSet)
@@ -232,7 +228,7 @@ namespace MediaBrowser.LocalMetadata.Images
 
                 if (!added)
                 {
-                    added = AddImage(files, images, "discart", imagePrefix, isInMixedFolder, ImageType.Disc);
+                    AddImage(files, images, "discart", imagePrefix, isInMixedFolder, ImageType.Disc);
                 }
             }
 
@@ -248,18 +244,13 @@ namespace MediaBrowser.LocalMetadata.Images
                 added = AddImage(files, images, "landscape", imagePrefix, isInMixedFolder, ImageType.Thumb);
                 if (!added)
                 {
-                    added = AddImage(files, images, "thumb", imagePrefix, isInMixedFolder, ImageType.Thumb);
+                    AddImage(files, images, "thumb", imagePrefix, isInMixedFolder, ImageType.Thumb);
                 }
             }
 
             if (!isEpisode && !isSong && !isPerson)
             {
                 PopulateBackdrops(item, images, files, imagePrefix, isInMixedFolder);
-            }
-
-            if (item is IHasScreenshots)
-            {
-                PopulateScreenshots(images, files, imagePrefix, isInMixedFolder);
             }
         }
 
@@ -301,7 +292,7 @@ namespace MediaBrowser.LocalMetadata.Images
 
             foreach (var name in imageFileNames)
             {
-                if (AddImage(files, images, imagePrefix + name, ImageType.Primary))
+                if (AddImage(files, images, name, ImageType.Primary, imagePrefix))
                 {
                     return;
                 }
@@ -327,9 +318,9 @@ namespace MediaBrowser.LocalMetadata.Images
 
                 if (!string.IsNullOrEmpty(name))
                 {
-                    AddImage(files, images, imagePrefix + name + "-fanart", ImageType.Backdrop);
+                    AddImage(files, images, name + "-fanart", ImageType.Backdrop, imagePrefix);
 
-                    // Support without the prefix if it's in it's own folder
+                    // Support without the prefix if it's in its own folder
                     if (!isInMixedFolder)
                     {
                         AddImage(files, images, name + "-fanart", ImageType.Backdrop);
@@ -344,7 +335,7 @@ namespace MediaBrowser.LocalMetadata.Images
             var extraFanartFolder = files
                 .FirstOrDefault(i => string.Equals(i.Name, "extrafanart", StringComparison.OrdinalIgnoreCase));
 
-            if (extraFanartFolder != null)
+            if (extraFanartFolder is not null)
             {
                 PopulateBackdropsFromExtraFanart(extraFanartFolder.FullName, images);
             }
@@ -361,11 +352,6 @@ namespace MediaBrowser.LocalMetadata.Images
                 FileInfo = i,
                 Type = ImageType.Backdrop
             }));
-        }
-
-        private void PopulateScreenshots(List<LocalImageInfo> images, List<FileSystemMetadata> files, string imagePrefix, bool isInMixedFolder)
-        {
-            PopulateBackdrops(images, files, imagePrefix, "screenshot", "screenshot", isInMixedFolder, ImageType.Screenshot);
         }
 
         private void PopulateBackdrops(List<LocalImageInfo> images, List<FileSystemMetadata> files, string imagePrefix, string firstFileName, string subsequentFileNamePrefix, bool isInMixedFolder, ImageType type)
@@ -451,7 +437,7 @@ namespace MediaBrowser.LocalMetadata.Images
 
         private bool AddImage(List<FileSystemMetadata> files, List<LocalImageInfo> images, string name, string imagePrefix, bool isInMixedFolder, ImageType type)
         {
-            var added = AddImage(files, images, imagePrefix + name, type);
+            var added = AddImage(files, images, name, type, imagePrefix);
 
             if (!isInMixedFolder)
             {
@@ -464,32 +450,39 @@ namespace MediaBrowser.LocalMetadata.Images
             return added;
         }
 
-        private bool AddImage(List<FileSystemMetadata> files, List<LocalImageInfo> images, string name, ImageType type)
+        private static bool AddImage(IReadOnlyList<FileSystemMetadata> files, List<LocalImageInfo> images, string name, ImageType type, string? prefix = null)
         {
-            var image = GetImage(files, name);
+            var image = GetImage(files, name, prefix);
 
-            if (image != null)
+            if (image is null)
             {
-                images.Add(new LocalImageInfo
-                {
-                    FileInfo = image,
-                    Type = type
-                });
-
-                return true;
+                return false;
             }
 
-            return false;
+            images.Add(new LocalImageInfo
+            {
+                FileInfo = image,
+                Type = type
+            });
+
+            return true;
         }
 
-        private static FileSystemMetadata? GetImage(IReadOnlyList<FileSystemMetadata> files, string name)
+        private static FileSystemMetadata? GetImage(IReadOnlyList<FileSystemMetadata> files, string name, string? prefix = null)
         {
+            var fileNameLength = name.Length + (prefix?.Length ?? 0);
             for (var i = 0; i < files.Count; i++)
             {
                 var file = files[i];
-                if (!file.IsDirectory
-                    && file.Length > 0
-                    && Path.GetFileNameWithoutExtension(file.FullName.AsSpan()).Equals(name, StringComparison.OrdinalIgnoreCase))
+                if (file.IsDirectory || file.Length <= 0)
+                {
+                    continue;
+                }
+
+                var fileName = Path.GetFileNameWithoutExtension(file.FullName.AsSpan());
+                if (fileName.Length == fileNameLength
+                    && fileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    && fileName.EndsWith(name, StringComparison.OrdinalIgnoreCase))
                 {
                     return file;
                 }

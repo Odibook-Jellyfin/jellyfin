@@ -4,12 +4,15 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Jellyfin.Data.Entities;
+using Jellyfin.Data.Enums;
+using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Querying;
 
 namespace Emby.Server.Implementations.Playlists
 {
+    [RequiresSourceSerialisation]
     public class PlaylistsFolder : BasePluginFolder
     {
         public PlaylistsFolder()
@@ -24,12 +27,7 @@ namespace Emby.Server.Implementations.Playlists
         public override bool SupportsInheritedParentImages => false;
 
         [JsonIgnore]
-        public override string CollectionType => MediaBrowser.Model.Entities.CollectionType.Playlists;
-
-        public override bool IsVisible(User user)
-        {
-            return base.IsVisible(user) && GetChildren(user, true).Any();
-        }
+        public override CollectionType? CollectionType => Jellyfin.Data.Enums.CollectionType.playlists;
 
         protected override IEnumerable<BaseItem> GetEligibleChildrenForRecursiveChildren(User user)
         {
@@ -38,16 +36,15 @@ namespace Emby.Server.Implementations.Playlists
 
         protected override QueryResult<BaseItem> GetItemsInternal(InternalItemsQuery query)
         {
-            if (query.User == null)
+            if (query.User is null)
             {
                 query.Recursive = false;
                 return base.GetItemsInternal(query);
             }
 
             query.Recursive = true;
-            query.IncludeItemTypes = new[] { "Playlist" };
-            query.Parent = null;
-            return LibraryManager.GetItemsResult(query);
+            query.IncludeItemTypes = new[] { BaseItemKind.Playlist };
+            return QueryWithPostFiltering2(query);
         }
 
         public override string GetClientTypeName()

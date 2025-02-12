@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Jellyfin.Extensions.Json.Converters;
 
 namespace Jellyfin.Extensions.Json
@@ -25,7 +26,7 @@ namespace Jellyfin.Extensions.Json
         ///   -> AddJellyfinApi
         ///    -> AddJsonOptions.
         /// </summary>
-        private static readonly JsonSerializerOptions _jsonSerializerOptions = new ()
+        private static readonly JsonSerializerOptions _jsonSerializerOptions = new()
         {
             ReadCommentHandling = JsonCommentHandling.Disallow,
             WriteIndented = false,
@@ -36,20 +37,22 @@ namespace Jellyfin.Extensions.Json
                 new JsonGuidConverter(),
                 new JsonNullableGuidConverter(),
                 new JsonVersionConverter(),
+                new JsonFlagEnumConverterFactory(),
+                new JsonDefaultStringEnumConverterFactory(),
                 new JsonStringEnumConverter(),
                 new JsonNullableStructConverterFactory(),
-                new JsonBoolNumberConverter(),
                 new JsonDateTimeConverter(),
                 new JsonStringConverter()
-            }
+            },
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
         };
 
-        private static readonly JsonSerializerOptions _pascalCaseJsonSerializerOptions = new (_jsonSerializerOptions)
+        private static readonly JsonSerializerOptions _pascalCaseJsonSerializerOptions = new(_jsonSerializerOptions)
         {
             PropertyNamingPolicy = null
         };
 
-        private static readonly JsonSerializerOptions _camelCaseJsonSerializerOptions = new (_jsonSerializerOptions)
+        private static readonly JsonSerializerOptions _camelCaseJsonSerializerOptions = new(_jsonSerializerOptions)
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };

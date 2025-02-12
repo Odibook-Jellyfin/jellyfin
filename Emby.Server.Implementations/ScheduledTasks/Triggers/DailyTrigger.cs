@@ -3,15 +3,16 @@ using System.Threading;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
-namespace Emby.Server.Implementations.ScheduledTasks
+namespace Emby.Server.Implementations.ScheduledTasks.Triggers
 {
     /// <summary>
     /// Represents a task trigger that fires everyday.
     /// </summary>
-    public sealed class DailyTrigger : ITaskTrigger
+    public sealed class DailyTrigger : ITaskTrigger, IDisposable
     {
         private readonly TimeSpan _timeOfDay;
         private Timer? _timer;
+        private bool _disposed = false;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DailyTrigger"/> class.
@@ -24,24 +25,14 @@ namespace Emby.Server.Implementations.ScheduledTasks
             TaskOptions = taskOptions;
         }
 
-        /// <summary>
-        /// Occurs when [triggered].
-        /// </summary>
+        /// <inheritdoc />
         public event EventHandler<EventArgs>? Triggered;
 
-        /// <summary>
-        /// Gets the options of this task.
-        /// </summary>
+        /// <inheritdoc />
         public TaskOptions TaskOptions { get; }
 
-        /// <summary>
-        /// Stars waiting for the trigger action.
-        /// </summary>
-        /// <param name="lastResult">The last result.</param>
-        /// <param name="logger">The logger.</param>
-        /// <param name="taskName">The name of the task.</param>
-        /// <param name="isApplicationStartup">if set to <c>true</c> [is application startup].</param>
-        public void Start(TaskResult lastResult, ILogger logger, string taskName, bool isApplicationStartup)
+        /// <inheritdoc />
+        public void Start(TaskResult? lastResult, ILogger logger, string taskName, bool isApplicationStartup)
         {
             DisposeTimer();
 
@@ -54,12 +45,10 @@ namespace Emby.Server.Implementations.ScheduledTasks
 
             logger.LogInformation("Daily trigger for {Task} set to fire at {TriggerDate:yyyy-MM-dd HH:mm:ss.fff zzz}, which is {DueTime:c} from now.", taskName, triggerDate, dueTime);
 
-            _timer = new Timer(state => OnTriggered(), null, dueTime, TimeSpan.FromMilliseconds(-1));
+            _timer = new Timer(_ => OnTriggered(), null, dueTime, TimeSpan.FromMilliseconds(-1));
         }
 
-        /// <summary>
-        /// Stops waiting for the trigger action.
-        /// </summary>
+        /// <inheritdoc />
         public void Stop()
         {
             DisposeTimer();
@@ -71,6 +60,7 @@ namespace Emby.Server.Implementations.ScheduledTasks
         private void DisposeTimer()
         {
             _timer?.Dispose();
+            _timer = null;
         }
 
         /// <summary>
@@ -79,6 +69,19 @@ namespace Emby.Server.Implementations.ScheduledTasks
         private void OnTriggered()
         {
             Triggered?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            DisposeTimer();
+
+            _disposed = true;
         }
     }
 }

@@ -1,4 +1,3 @@
-using System.Globalization;
 using Emby.Naming.Common;
 
 namespace Emby.Naming.TV
@@ -29,7 +28,7 @@ namespace Emby.Naming.TV
                 }
             }
 
-            if (result != null)
+            if (result is not null)
             {
                 if (!string.IsNullOrEmpty(result.SeriesName))
                 {
@@ -51,7 +50,7 @@ namespace Emby.Naming.TV
                 if (expression.IsNamed)
                 {
                     result.SeriesName = match.Groups["seriesname"].Value;
-                    result.Success = !string.IsNullOrEmpty(result.SeriesName) && !string.IsNullOrEmpty(match.Groups["seasonnumber"]?.Value);
+                    result.Success = !string.IsNullOrEmpty(result.SeriesName) && !match.Groups["seasonnumber"].ValueSpan.IsEmpty;
                 }
             }
 

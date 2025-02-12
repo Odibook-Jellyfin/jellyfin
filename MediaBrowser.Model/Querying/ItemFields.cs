@@ -1,5 +1,7 @@
 #pragma warning disable CS1591
 
+using System;
+
 namespace MediaBrowser.Model.Querying
 {
     /// <summary>
@@ -31,6 +33,11 @@ namespace MediaBrowser.Model.Querying
         /// The chapters.
         /// </summary>
         Chapters,
+
+        /// <summary>
+        /// The trickplay manifest.
+        /// </summary>
+        Trickplay,
 
         ChildCount,
 
@@ -124,7 +131,7 @@ namespace MediaBrowser.Model.Querying
         ProductionLocations,
 
         /// <summary>
-        /// Imdb, tmdb, etc.
+        /// The ids from IMDb, TMDb, etc.
         /// </summary>
         ProviderIds,
 
@@ -143,6 +150,7 @@ namespace MediaBrowser.Model.Querying
         /// <summary>
         /// The screenshot image tags.
         /// </summary>
+        [Obsolete("Screenshot image type is no longer used.")]
         ScreenshotImageTags,
 
         SeriesPrimaryImage,
@@ -166,13 +174,6 @@ namespace MediaBrowser.Model.Querying
         /// The studios of the item.
         /// </summary>
         Studios,
-
-        BasicSyncInfo,
-
-        /// <summary>
-        /// The synchronize information.
-        /// </summary>
-        SyncInfo,
 
         /// <summary>
         /// The taglines of the item.

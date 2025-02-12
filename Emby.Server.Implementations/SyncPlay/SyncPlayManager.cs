@@ -67,7 +67,7 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <remarks>
         /// This lock has priority on locks made on <see cref="Group"/>.
         /// </remarks>
-        private readonly object _groupsLock = new object();
+        private readonly Lock _groupsLock = new();
 
         private bool _disposed = false;
 
@@ -102,12 +102,12 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public void NewGroup(SessionInfo session, NewGroupRequest request, CancellationToken cancellationToken)
         {
-            if (session == null)
+            if (session is null)
             {
                 throw new InvalidOperationException("Session is null!");
             }
 
-            if (request == null)
+            if (request is null)
             {
                 throw new InvalidOperationException("Request is null!");
             }
@@ -138,12 +138,12 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public void JoinGroup(SessionInfo session, JoinGroupRequest request, CancellationToken cancellationToken)
         {
-            if (session == null)
+            if (session is null)
             {
                 throw new InvalidOperationException("Session is null!");
             }
 
-            if (request == null)
+            if (request is null)
             {
                 throw new InvalidOperationException("Request is null!");
             }
@@ -155,7 +155,7 @@ namespace Emby.Server.Implementations.SyncPlay
             {
                 _groups.TryGetValue(request.GroupId, out Group group);
 
-                if (group == null)
+                if (group is null)
                 {
                     _logger.LogWarning("Session {SessionId} tried to join group {GroupId} that does not exist.", session.Id, request.GroupId);
 
@@ -204,12 +204,12 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public void LeaveGroup(SessionInfo session, LeaveGroupRequest request, CancellationToken cancellationToken)
         {
-            if (session == null)
+            if (session is null)
             {
                 throw new InvalidOperationException("Session is null!");
             }
 
-            if (request == null)
+            if (request is null)
             {
                 throw new InvalidOperationException("Request is null!");
             }
@@ -250,7 +250,6 @@ namespace Emby.Server.Implementations.SyncPlay
 
                     var error = new GroupUpdate<string>(Guid.Empty, GroupUpdateType.NotInGroup, string.Empty);
                     _sessionManager.SendSyncPlayGroupUpdate(session.Id, error, CancellationToken.None);
-                    return;
                 }
             }
         }
@@ -258,12 +257,12 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public List<GroupInfoDto> ListGroups(SessionInfo session, ListGroupsRequest request)
         {
-            if (session == null)
+            if (session is null)
             {
                 throw new InvalidOperationException("Session is null!");
             }
 
-            if (request == null)
+            if (request is null)
             {
                 throw new InvalidOperationException("Request is null!");
             }
@@ -292,12 +291,12 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public void HandleRequest(SessionInfo session, IGroupPlaybackRequest request, CancellationToken cancellationToken)
         {
-            if (session == null)
+            if (session is null)
             {
                 throw new InvalidOperationException("Session is null!");
             }
 
-            if (request == null)
+            if (request is null)
             {
                 throw new InvalidOperationException("Request is null!");
             }
@@ -340,10 +339,8 @@ namespace Emby.Server.Implementations.SyncPlay
             {
                 return sessionsCounter > 0;
             }
-            else
-            {
-                return false;
-            }
+
+            return false;
         }
 
         /// <summary>
@@ -365,7 +362,7 @@ namespace Emby.Server.Implementations.SyncPlay
         {
             var session = e.SessionInfo;
 
-            if (_sessionToGroupMap.TryGetValue(session.Id, out var group))
+            if (_sessionToGroupMap.TryGetValue(session.Id, out _))
             {
                 var leaveGroupRequest = new LeaveGroupRequest();
                 LeaveGroup(session, leaveGroupRequest, CancellationToken.None);
@@ -378,7 +375,7 @@ namespace Emby.Server.Implementations.SyncPlay
             var newSessionsCounter = _activeUsers.AddOrUpdate(
                 userId,
                 1,
-                (key, sessionsCounter) => sessionsCounter + toAdd);
+                (_, sessionsCounter) => sessionsCounter + toAdd);
 
             // Should never happen.
             if (newSessionsCounter < 0)

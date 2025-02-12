@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using Jellyfin.Data.Entities;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -52,14 +53,17 @@ namespace Jellyfin.XbmcMetadata.Tests.Parsers
 
             var userData = new Mock<IUserDataManager>();
             userData.Setup(x => x.GetUserData(_testUser, It.IsAny<BaseItem>()))
-                .Returns(new UserItemData());
+                .Returns(new UserItemData()
+                {
+                    Key = "Something"
+                });
 
             var directoryService = new Mock<IDirectoryService>();
             _localImageFileMetadata = new FileSystemMetadata()
             {
                 Exists = true,
                 FullName = OperatingSystem.IsWindows() ?
-                    "C:\\media\\movies\\Justice League (2017).jpg"
+                    @"C:\media\movies\Justice League (2017).jpg"
                     : "/media/movies/Justice League (2017).jpg"
             };
             directoryService.Setup(x => x.GetFile(_localImageFileMetadata.FullName))
@@ -117,18 +121,18 @@ namespace Jellyfin.XbmcMetadata.Tests.Parsers
 
             Assert.Equal(20, result.People.Count);
 
-            var writers = result.People.Where(x => x.Type == PersonType.Writer).ToArray();
+            var writers = result.People.Where(x => x.Type == PersonKind.Writer).ToArray();
             Assert.Equal(3, writers.Length);
             var writerNames = writers.Select(x => x.Name);
             Assert.Contains("Jerry Siegel", writerNames);
             Assert.Contains("Joe Shuster", writerNames);
             Assert.Contains("Test", writerNames);
 
-            var directors = result.People.Where(x => x.Type == PersonType.Director).ToArray();
+            var directors = result.People.Where(x => x.Type == PersonKind.Director).ToArray();
             Assert.Single(directors);
             Assert.Equal("Zack Snyder", directors[0].Name);
 
-            var actors = result.People.Where(x => x.Type == PersonType.Actor).ToArray();
+            var actors = result.People.Where(x => x.Type == PersonKind.Actor).ToArray();
             Assert.Equal(15, actors.Length);
 
             // Only test one actor
@@ -138,14 +142,14 @@ namespace Jellyfin.XbmcMetadata.Tests.Parsers
             Assert.Equal(5, aquaman!.SortOrder);
             Assert.Equal("https://m.media-amazon.com/images/M/MV5BMTI5MTU5NjM1MV5BMl5BanBnXkFtZTcwODc4MDk0Mw@@._V1_SX1024_SY1024_.jpg", aquaman!.ImageUrl);
 
-            var lyricist = result.People.FirstOrDefault(x => x.Type == PersonType.Lyricist);
+            var lyricist = result.People.FirstOrDefault(x => x.Type == PersonKind.Lyricist);
             Assert.NotNull(lyricist);
             Assert.Equal("Test Lyricist", lyricist!.Name);
 
             Assert.Equal(new DateTime(2019, 8, 6, 9, 1, 18), item.DateCreated);
 
             // userData
-            var userData = _userDataManager.GetUserData(_testUser, item);
+            var userData = _userDataManager.GetUserData(_testUser, item)!;
             Assert.Equal(2, userData.PlayCount);
             Assert.True(userData.Played);
             Assert.Equal(new DateTime(2021, 02, 11, 07, 47, 23), userData.LastPlayedDate);
@@ -157,33 +161,33 @@ namespace Jellyfin.XbmcMetadata.Tests.Parsers
             // Images
             Assert.Equal(7, result.RemoteImages.Count);
 
-            var posters = result.RemoteImages.Where(x => x.type == ImageType.Primary).ToList();
+            var posters = result.RemoteImages.Where(x => x.Type == ImageType.Primary).ToList();
             Assert.Single(posters);
-            Assert.Equal("http://image.tmdb.org/t/p/original/9rtrRGeRnL0JKtu9IMBWsmlmmZz.jpg", posters[0].url);
+            Assert.Equal("http://image.tmdb.org/t/p/original/9rtrRGeRnL0JKtu9IMBWsmlmmZz.jpg", posters[0].Url);
 
-            var logos = result.RemoteImages.Where(x => x.type == ImageType.Logo).ToList();
+            var logos = result.RemoteImages.Where(x => x.Type == ImageType.Logo).ToList();
             Assert.Single(logos);
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/hdmovielogo/justice-league-5865bf95cbadb.png", logos[0].url);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/hdmovielogo/justice-league-5865bf95cbadb.png", logos[0].Url);
 
-            var banners = result.RemoteImages.Where(x => x.type == ImageType.Banner).ToList();
+            var banners = result.RemoteImages.Where(x => x.Type == ImageType.Banner).ToList();
             Assert.Single(banners);
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviebanner/justice-league-586017e95adbd.jpg", banners[0].url);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviebanner/justice-league-586017e95adbd.jpg", banners[0].Url);
 
-            var thumbs = result.RemoteImages.Where(x => x.type == ImageType.Thumb).ToList();
+            var thumbs = result.RemoteImages.Where(x => x.Type == ImageType.Thumb).ToList();
             Assert.Single(thumbs);
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviethumb/justice-league-585fb155c3743.jpg", thumbs[0].url);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviethumb/justice-league-585fb155c3743.jpg", thumbs[0].Url);
 
-            var art = result.RemoteImages.Where(x => x.type == ImageType.Art).ToList();
+            var art = result.RemoteImages.Where(x => x.Type == ImageType.Art).ToList();
             Assert.Single(art);
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/hdmovieclearart/justice-league-5865c23193041.png", art[0].url);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/hdmovieclearart/justice-league-5865c23193041.png", art[0].Url);
 
-            var discArt = result.RemoteImages.Where(x => x.type == ImageType.Disc).ToList();
+            var discArt = result.RemoteImages.Where(x => x.Type == ImageType.Disc).ToList();
             Assert.Single(discArt);
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviedisc/justice-league-5a3af26360617.png", discArt[0].url);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviedisc/justice-league-5a3af26360617.png", discArt[0].Url);
 
-            var backdrop = result.RemoteImages.Where(x => x.type == ImageType.Backdrop).ToList();
+            var backdrop = result.RemoteImages.Where(x => x.Type == ImageType.Backdrop).ToList();
             Assert.Single(backdrop);
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviebackground/justice-league-5793f518c6d6e.jpg", backdrop[0].url);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviebackground/justice-league-5793f518c6d6e.jpg", backdrop[0].Url);
 
             // Local Image - contains only one item depending on operating system
             Assert.Single(result.Images);
@@ -216,8 +220,8 @@ namespace Jellyfin.XbmcMetadata.Tests.Parsers
 
             _parser.Fetch(result, "Test Data/Fanart.nfo", CancellationToken.None);
 
-            Assert.Single(result.RemoteImages.Where(x => x.type == ImageType.Backdrop));
-            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviebackground/justice-league-5a5332c7b5e77.jpg", result.RemoteImages.First(x => x.type == ImageType.Backdrop).url);
+            Assert.Single(result.RemoteImages, x => x.Type == ImageType.Backdrop);
+            Assert.Equal("https://assets.fanart.tv/fanart/movies/141052/moviebackground/justice-league-5a5332c7b5e77.jpg", result.RemoteImages.First(x => x.Type == ImageType.Backdrop).Url);
         }
 
         [Fact]
@@ -252,6 +256,24 @@ namespace Jellyfin.XbmcMetadata.Tests.Parsers
             };
 
             Assert.Throws<ArgumentException>(() => _parser.Fetch(result, string.Empty, CancellationToken.None));
+        }
+
+        [Fact]
+        public void Parsing_Fields_With_Escaped_Xml_Special_Characters_Success()
+        {
+            var result = new MetadataResult<Video>()
+            {
+                Item = new Movie()
+            };
+
+            _parser.Fetch(result, "Test Data/Lilo & Stitch.nfo", CancellationToken.None);
+            var item = (Movie)result.Item;
+
+            Assert.Equal("Lilo & Stitch", item.Name);
+            Assert.Equal("Lilo & Stitch", item.OriginalTitle);
+            Assert.Equal("Lilo & Stitch Collection", item.CollectionName);
+            Assert.StartsWith(">>", item.Overview, StringComparison.InvariantCulture);
+            Assert.EndsWith("<<", item.Overview, StringComparison.InvariantCulture);
         }
     }
 }

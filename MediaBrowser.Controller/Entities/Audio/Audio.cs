@@ -4,14 +4,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Jellyfin.Data.Enums;
-using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Dto;
-using MediaBrowser.Model.Entities;
 
 namespace MediaBrowser.Controller.Entities.Audio
 {
@@ -29,6 +28,7 @@ namespace MediaBrowser.Controller.Entities.Audio
         {
             Artists = Array.Empty<string>();
             AlbumArtists = Array.Empty<string>();
+            LyricFiles = Array.Empty<string>();
         }
 
         /// <inheritdoc />
@@ -65,7 +65,17 @@ namespace MediaBrowser.Controller.Entities.Audio
         /// </summary>
         /// <value>The type of the media.</value>
         [JsonIgnore]
-        public override string MediaType => Model.Entities.MediaType.Audio;
+        public override MediaType MediaType => MediaType.Audio;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether this audio has lyrics.
+        /// </summary>
+        public bool? HasLyrics { get; set; }
+
+        /// <summary>
+        /// Gets or sets the list of lyric paths.
+        /// </summary>
+        public IReadOnlyList<string> LyricFiles { get; set; }
 
         public override double GetDefaultPrimaryImageAspectRatio()
         {
@@ -83,8 +93,8 @@ namespace MediaBrowser.Controller.Entities.Audio
         /// <returns>System.String.</returns>
         protected override string CreateSortName()
         {
-            return (ParentIndexNumber != null ? ParentIndexNumber.Value.ToString("0000 - ", CultureInfo.InvariantCulture) : string.Empty)
-                    + (IndexNumber != null ? IndexNumber.Value.ToString("0000 - ", CultureInfo.InvariantCulture) : string.Empty) + Name;
+            return (ParentIndexNumber is not null ? ParentIndexNumber.Value.ToString("0000 - ", CultureInfo.InvariantCulture) : string.Empty)
+                    + (IndexNumber is not null ? IndexNumber.Value.ToString("0000 - ", CultureInfo.InvariantCulture) : string.Empty) + Name;
         }
 
         public override List<string> GetUserDataKeys()
@@ -126,15 +136,6 @@ namespace MediaBrowser.Controller.Entities.Audio
             return base.GetBlockUnratedType();
         }
 
-        public List<MediaStream> GetMediaStreams(MediaStreamType type)
-        {
-            return MediaSourceManager.GetMediaStreams(new MediaStreamQuery
-            {
-                ItemId = Id,
-                Type = type
-            });
-        }
-
         public SongInfo GetLookupInfo()
         {
             var info = GetItemLookupInfo<SongInfo>();
@@ -146,11 +147,7 @@ namespace MediaBrowser.Controller.Entities.Audio
             return info;
         }
 
-        protected override List<Tuple<BaseItem, MediaSourceType>> GetAllItemsForMediaSources()
-        {
-            var list = new List<Tuple<BaseItem, MediaSourceType>>();
-            list.Add(new Tuple<BaseItem, MediaSourceType>(this, MediaSourceType.Default));
-            return list;
-        }
+        protected override IEnumerable<(BaseItem Item, MediaSourceType MediaSourceType)> GetAllItemsForMediaSources()
+            => new[] { ((BaseItem)this, MediaSourceType.Default) };
     }
 }

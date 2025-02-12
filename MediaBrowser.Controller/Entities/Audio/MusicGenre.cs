@@ -5,7 +5,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
-using Diacritics.Extensions;
+using Jellyfin.Data.Enums;
+using Jellyfin.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace MediaBrowser.Controller.Entities.Audio
@@ -13,6 +14,7 @@ namespace MediaBrowser.Controller.Entities.Audio
     /// <summary>
     /// Class MusicGenre.
     /// </summary>
+    [Common.RequiresSourceSerialisation]
     public class MusicGenre : BaseItem, IItemByName
     {
         [JsonIgnore]
@@ -63,10 +65,10 @@ namespace MediaBrowser.Controller.Entities.Audio
             return true;
         }
 
-        public IList<BaseItem> GetTaggedItems(InternalItemsQuery query)
+        public IReadOnlyList<BaseItem> GetTaggedItems(InternalItemsQuery query)
         {
             query.GenreIds = new[] { Id };
-            query.IncludeItemTypes = new[] { nameof(MusicVideo), nameof(Audio), nameof(MusicAlbum), nameof(MusicArtist) };
+            query.IncludeItemTypes = new[] { BaseItemKind.MusicVideo, BaseItemKind.Audio, BaseItemKind.MusicAlbum, BaseItemKind.MusicArtist };
 
             return LibraryManager.GetItemList(query);
         }

@@ -1,4 +1,5 @@
 using System;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Sorting;
@@ -15,7 +16,7 @@ namespace Emby.Server.Implementations.Sorting
         /// Gets the name.
         /// </summary>
         /// <value>The name.</value>
-        public string Name => ItemSortBy.Album;
+        public ItemSortBy Type => ItemSortBy.Album;
 
         /// <summary>
         /// Compares the specified x.
@@ -25,7 +26,7 @@ namespace Emby.Server.Implementations.Sorting
         /// <returns>System.Int32.</returns>
         public int Compare(BaseItem? x, BaseItem? y)
         {
-            return string.Compare(GetValue(x), GetValue(y), StringComparison.CurrentCultureIgnoreCase);
+            return string.Compare(GetValue(x), GetValue(y), StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -33,11 +34,9 @@ namespace Emby.Server.Implementations.Sorting
         /// </summary>
         /// <param name="x">The x.</param>
         /// <returns>System.String.</returns>
-        private static string? GetValue(BaseItem? x)
+        private static string GetValue(BaseItem? x)
         {
-            var audio = x as Audio;
-
-            return audio == null ? string.Empty : audio.Album;
+            return x is Audio audio ? audio.Album : string.Empty;
         }
     }
 }

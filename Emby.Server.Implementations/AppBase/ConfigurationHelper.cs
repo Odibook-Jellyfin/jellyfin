@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 using MediaBrowser.Model.Serialization;
 
 namespace Emby.Server.Implementations.AppBase
@@ -44,7 +43,7 @@ namespace Emby.Server.Implementations.AppBase
             Span<byte> newBytes = stream.GetBuffer().AsSpan(0, (int)stream.Length);
 
             // If the file didn't exist before, or if something has changed, re-save
-            if (buffer == null || !newBytes.SequenceEqual(buffer))
+            if (buffer is null || !newBytes.SequenceEqual(buffer))
             {
                 var directory = Path.GetDirectoryName(path) ?? throw new ArgumentException($"Provided path ({path}) is not valid.", nameof(path));
 

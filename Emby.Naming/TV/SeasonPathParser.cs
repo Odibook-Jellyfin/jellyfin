@@ -24,6 +24,8 @@ namespace Emby.Naming.TV
             "stagione"
         };
 
+        private static readonly char[] _splitChars = ['.', '_', ' ', '-'];
+
         /// <summary>
         /// Attempts to parse season number from path.
         /// </summary>
@@ -55,7 +57,7 @@ namespace Emby.Naming.TV
         /// <param name="supportSpecialAliases">if set to <c>true</c> [support special aliases].</param>
         /// <param name="supportNumericSeasonFolders">if set to <c>true</c> [support numeric season folders].</param>
         /// <returns>System.Nullable{System.Int32}.</returns>
-        private static (int? seasonNumber, bool isSeasonFolder) GetSeasonNumberFromPath(
+        private static (int? SeasonNumber, bool IsSeasonFolder) GetSeasonNumberFromPath(
             string path,
             bool supportSpecialAliases,
             bool supportNumericSeasonFolders)
@@ -83,14 +85,9 @@ namespace Emby.Naming.TV
                 }
             }
 
-            if (filename.StartsWith("s", StringComparison.OrdinalIgnoreCase))
+            if (TryGetSeasonNumberFromPart(filename, out int seasonNumber))
             {
-                var testFilename = filename.AsSpan().Slice(1);
-
-                if (int.TryParse(testFilename, NumberStyles.Integer, CultureInfo.InvariantCulture, out var val))
-                {
-                    return (val, true);
-                }
+                return (seasonNumber, true);
             }
 
             // Look for one of the season folder names
@@ -99,7 +96,7 @@ namespace Emby.Naming.TV
                 if (filename.Contains(name, StringComparison.OrdinalIgnoreCase))
                 {
                     var result = GetSeasonNumberFromPathSubstring(filename.Replace(name, " ", StringComparison.OrdinalIgnoreCase));
-                    if (result.seasonNumber.HasValue)
+                    if (result.SeasonNumber.HasValue)
                     {
                         return result;
                     }
@@ -108,10 +105,10 @@ namespace Emby.Naming.TV
                 }
             }
 
-            var parts = filename.Split(new[] { '.', '_', ' ', '-' }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = filename.Split(_splitChars, StringSplitOptions.RemoveEmptyEntries);
             foreach (var part in parts)
             {
-                if (TryGetSeasonNumberFromPart(part, out int seasonNumber))
+                if (TryGetSeasonNumberFromPart(part, out seasonNumber))
                 {
                     return (seasonNumber, true);
                 }
@@ -142,7 +139,7 @@ namespace Emby.Naming.TV
         /// </summary>
         /// <param name="path">The path.</param>
         /// <returns>System.Nullable{System.Int32}.</returns>
-        private static (int? seasonNumber, bool isSeasonFolder) GetSeasonNumberFromPathSubstring(ReadOnlySpan<char> path)
+        private static (int? SeasonNumber, bool IsSeasonFolder) GetSeasonNumberFromPathSubstring(ReadOnlySpan<char> path)
         {
             var numericStart = -1;
             var length = 0;

@@ -1,7 +1,3 @@
-#nullable disable
-
-#pragma warning disable CS1591
-
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -9,6 +5,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
+using Jellyfin.Extensions;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
@@ -22,12 +20,21 @@ using TMDbLib.Objects.TvShows;
 
 namespace MediaBrowser.Providers.Plugins.Tmdb.TV
 {
+    /// <summary>
+    /// TV series provider powered by TheMovieDb.
+    /// </summary>
     public class TmdbSeriesProvider : IRemoteMetadataProvider<Series, SeriesInfo>, IHasOrder
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILibraryManager _libraryManager;
         private readonly TmdbClientManager _tmdbClientManager;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TmdbSeriesProvider"/> class.
+        /// </summary>
+        /// <param name="libraryManager">The <see cref="ILibraryManager"/>.</param>
+        /// <param name="httpClientFactory">The <see cref="IHttpClientFactory"/>.</param>
+        /// <param name="tmdbClientManager">The <see cref="TmdbClientManager"/>.</param>
         public TmdbSeriesProvider(
             ILibraryManager libraryManager,
             IHttpClientFactory httpClientFactory,
@@ -38,11 +45,13 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
             _tmdbClientManager = tmdbClientManager;
         }
 
+        /// <inheritdoc />
         public string Name => TmdbUtils.ProviderName;
 
-        // After TheTVDB
+        /// <inheritdoc />
         public int Order => 1;
 
+        /// <inheritdoc />
         public async Task<IEnumerable<RemoteSearchResult>> GetSearchResults(SeriesInfo searchInfo, CancellationToken cancellationToken)
         {
             if (searchInfo.TryGetProviderId(MetadataProvider.Tmdb, out var tmdbId))
@@ -51,7 +60,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                     .GetSeriesAsync(Convert.ToInt32(tmdbId, CultureInfo.InvariantCulture), searchInfo.MetadataLanguage, searchInfo.MetadataLanguage, cancellationToken)
                     .ConfigureAwait(false);
 
-                if (series != null)
+                if (series is not null)
                 {
                     var remoteResult = MapTvShowToRemoteSearchResult(series);
 
@@ -66,7 +75,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                     .ConfigureAwait(false);
 
                 var tvResults = findResult?.TvResults;
-                if (tvResults != null)
+                if (tvResults is not null)
                 {
                     var imdbIdResults = new RemoteSearchResult[tvResults.Count];
                     for (var i = 0; i < tvResults.Count; i++)
@@ -87,7 +96,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                     .ConfigureAwait(false);
 
                 var tvResults = findResult?.TvResults;
-                if (tvResults != null)
+                if (tvResults is not null)
                 {
                     var tvIdResults = new RemoteSearchResult[tvResults.Count];
                     for (var i = 0; i < tvResults.Count; i++)
@@ -124,17 +133,11 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
             };
 
             remoteResult.SetProviderId(MetadataProvider.Tmdb, series.Id.ToString(CultureInfo.InvariantCulture));
-            if (series.ExternalIds != null)
+            if (series.ExternalIds is not null)
             {
-                if (!string.IsNullOrEmpty(series.ExternalIds.ImdbId))
-                {
-                    remoteResult.SetProviderId(MetadataProvider.Imdb, series.ExternalIds.ImdbId);
-                }
+                remoteResult.TrySetProviderId(MetadataProvider.Imdb, series.ExternalIds.ImdbId);
 
-                if (!string.IsNullOrEmpty(series.ExternalIds.TvdbId))
-                {
-                    remoteResult.SetProviderId(MetadataProvider.Tvdb, series.ExternalIds.TvdbId);
-                }
+                remoteResult.TrySetProviderId(MetadataProvider.Tvdb, series.ExternalIds.TvdbId);
             }
 
             remoteResult.PremiereDate = series.FirstAirDate?.ToUniversalTime();
@@ -158,6 +161,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
             return remoteResult;
         }
 
+        /// <inheritdoc />
         public async Task<MetadataResult<Series>> GetMetadata(SeriesInfo info, CancellationToken cancellationToken)
         {
             var result = new MetadataResult<Series>
@@ -200,7 +204,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                 }
             }
 
-            if (string.IsNullOrEmpty(tmdbId))
+            if (!int.TryParse(tmdbId, CultureInfo.InvariantCulture, out int tmdbIdInt))
             {
                 return result;
             }
@@ -208,8 +212,13 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
             cancellationToken.ThrowIfCancellationRequested();
 
             var tvShow = await _tmdbClientManager
-                .GetSeriesAsync(Convert.ToInt32(tmdbId, CultureInfo.InvariantCulture), info.MetadataLanguage, TmdbUtils.GetImageLanguagesParam(info.MetadataLanguage), cancellationToken)
+                .GetSeriesAsync(tmdbIdInt, info.MetadataLanguage, TmdbUtils.GetImageLanguagesParam(info.MetadataLanguage), cancellationToken)
                 .ConfigureAwait(false);
+
+            if (tvShow is null)
+            {
+                return result;
+            }
 
             result = new MetadataResult<Series>
             {
@@ -222,7 +231,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                 result.AddPerson(person);
             }
 
-            result.HasMetadata = result.Item != null;
+            result.HasMetadata = result.Item is not null;
 
             return result;
         }
@@ -241,17 +250,17 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
 
             series.Overview = seriesResult.Overview;
 
-            if (seriesResult.Networks != null)
+            if (seriesResult.Networks is not null)
             {
                 series.Studios = seriesResult.Networks.Select(i => i.Name).ToArray();
             }
 
-            if (seriesResult.Genres != null)
+            if (seriesResult.Genres is not null)
             {
                 series.Genres = seriesResult.Genres.Select(i => i.Name).ToArray();
             }
 
-            if (seriesResult.Keywords?.Results != null)
+            if (seriesResult.Keywords?.Results is not null)
             {
                 for (var i = 0; i < seriesResult.Keywords.Results.Count; i++)
                 {
@@ -263,35 +272,20 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
 
             series.RunTimeTicks = seriesResult.EpisodeRunTime.Select(i => TimeSpan.FromMinutes(i).Ticks).FirstOrDefault();
 
-            if (string.Equals(seriesResult.Status, "Ended", StringComparison.OrdinalIgnoreCase))
+            if (Emby.Naming.TV.TvParserHelpers.TryParseSeriesStatus(seriesResult.Status, out var seriesStatus))
             {
-                series.Status = SeriesStatus.Ended;
-                series.EndDate = seriesResult.LastAirDate;
-            }
-            else
-            {
-                series.Status = SeriesStatus.Continuing;
+                series.Status = seriesStatus;
             }
 
+            series.EndDate = seriesResult.LastAirDate;
             series.PremiereDate = seriesResult.FirstAirDate;
 
             var ids = seriesResult.ExternalIds;
-            if (ids != null)
+            if (ids is not null)
             {
-                if (!string.IsNullOrWhiteSpace(ids.ImdbId))
-                {
-                    series.SetProviderId(MetadataProvider.Imdb, ids.ImdbId);
-                }
-
-                if (!string.IsNullOrEmpty(ids.TvrageId))
-                {
-                    series.SetProviderId(MetadataProvider.TvRage, ids.TvrageId);
-                }
-
-                if (!string.IsNullOrEmpty(ids.TvdbId))
-                {
-                    series.SetProviderId(MetadataProvider.Tvdb, ids.TvdbId);
-                }
+                series.TrySetProviderId(MetadataProvider.Imdb, ids.ImdbId);
+                series.TrySetProviderId(MetadataProvider.TvRage, ids.TvrageId);
+                series.TrySetProviderId(MetadataProvider.Tvdb, ids.TvdbId);
             }
 
             var contentRatings = seriesResult.ContentRatings.Results ?? new List<ContentRating>();
@@ -300,20 +294,20 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
             var usRelease = contentRatings.FirstOrDefault(c => string.Equals(c.Iso_3166_1, "US", StringComparison.OrdinalIgnoreCase));
             var minimumRelease = contentRatings.FirstOrDefault();
 
-            if (ourRelease != null)
+            if (ourRelease is not null)
             {
                 series.OfficialRating = TmdbUtils.BuildParentalRating(ourRelease.Iso_3166_1, ourRelease.Rating);
             }
-            else if (usRelease != null)
+            else if (usRelease is not null)
             {
                 series.OfficialRating = usRelease.Rating;
             }
-            else if (minimumRelease != null)
+            else if (minimumRelease is not null)
             {
                 series.OfficialRating = minimumRelease.Rating;
             }
 
-            if (seriesResult.Videos?.Results != null)
+            if (seriesResult.Videos?.Results is not null)
             {
                 foreach (var video in seriesResult.Videos.Results)
                 {
@@ -329,15 +323,15 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
 
         private IEnumerable<PersonInfo> GetPersons(TvShow seriesResult)
         {
-            if (seriesResult.Credits?.Cast != null)
+            if (seriesResult.Credits?.Cast is not null)
             {
-                foreach (var actor in seriesResult.Credits.Cast.OrderBy(a => a.Order).Take(TmdbUtils.MaxCastMembers))
+                foreach (var actor in seriesResult.Credits.Cast.OrderBy(a => a.Order).Take(Plugin.Instance.Configuration.MaxCastMembers))
                 {
                     var personInfo = new PersonInfo
                     {
                         Name = actor.Name.Trim(),
                         Role = actor.Character,
-                        Type = PersonType.Actor,
+                        Type = PersonKind.Actor,
                         SortOrder = actor.Order,
                         ImageUrl = _tmdbClientManager.GetPosterUrl(actor.ProfilePath)
                     };
@@ -351,7 +345,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                 }
             }
 
-            if (seriesResult.Credits?.Crew != null)
+            if (seriesResult.Credits?.Crew is not null)
             {
                 var keepTypes = new[]
                 {
@@ -365,8 +359,8 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
                     // Normalize this
                     var type = TmdbUtils.MapCrewToPersonType(person);
 
-                    if (!keepTypes.Contains(type, StringComparer.OrdinalIgnoreCase)
-                        && !keepTypes.Contains(person.Job ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+                    if (!TmdbUtils.WantedCrewKinds.Contains(type)
+                        && !TmdbUtils.WantedCrewTypes.Contains(person.Job ?? string.Empty, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -381,6 +375,7 @@ namespace MediaBrowser.Providers.Plugins.Tmdb.TV
             }
         }
 
+        /// <inheritdoc />
         public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
         {
             return _httpClientFactory.CreateClient(NamedClient.Default).GetAsync(url, cancellationToken);

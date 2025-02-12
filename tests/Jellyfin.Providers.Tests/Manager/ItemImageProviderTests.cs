@@ -5,12 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Mime;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
@@ -26,15 +26,18 @@ using Xunit;
 
 namespace Jellyfin.Providers.Tests.Manager
 {
-    public class ItemImageProviderTests
+    public partial class ItemImageProviderTests
     {
-        private static readonly string TestDataImagePath = "Test Data/Images/blank{0}.jpg";
+        private static readonly CompositeFormat _testDataImagePath = CompositeFormat.Parse("Test Data/Images/blank{0}.jpg");
+
+        [GeneratedRegex("[0-9]+")]
+        private static partial Regex NumbersRegex();
 
         [Fact]
         public void ValidateImages_PhotoEmptyProviders_NoChange()
         {
             var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.ValidateImages(new Photo(), new List<ILocalImageProvider>(), null);
+            var changed = itemImageProvider.ValidateImages(new Photo(), Enumerable.Empty<ILocalImageProvider>(), null);
 
             Assert.False(changed);
         }
@@ -42,21 +45,16 @@ namespace Jellyfin.Providers.Tests.Manager
         [Fact]
         public void ValidateImages_EmptyItemEmptyProviders_NoChange()
         {
-            var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.ValidateImages(new MovieWithScreenshots(), new List<ILocalImageProvider>(), null);
-
-            Assert.False(changed);
+            ValidateImages_Test(ImageType.Primary, 0, true, 0, false, 0);
         }
 
-        private static TheoryData<ImageType, int> GetImageTypesWithCount()
+        public static TheoryData<ImageType, int> GetImageTypesWithCount()
         {
             var theoryTypes = new TheoryData<ImageType, int>
             {
                 // minimal test cases that hit different handling
                 { ImageType.Primary, 1 },
-                { ImageType.Backdrop, 1 },
-                { ImageType.Backdrop, 2 },
-                { ImageType.Screenshot, 1 }
+                { ImageType.Backdrop, 2 }
             };
 
             return theoryTypes;
@@ -66,50 +64,41 @@ namespace Jellyfin.Providers.Tests.Manager
         [MemberData(nameof(GetImageTypesWithCount))]
         public void ValidateImages_EmptyItemAndPopulatedProviders_AddsImages(ImageType imageType, int imageCount)
         {
-            // Has to exist for querying DateModified time on file, results stored but not checked so not populating
-            BaseItem.FileSystem = Mock.Of<IFileSystem>();
-
-            var item = new MovieWithScreenshots();
-            var imageProvider = GetImageProvider(imageType, imageCount, true);
-
-            var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.ValidateImages(item, new List<ILocalImageProvider> { imageProvider }, null);
-
-            Assert.True(changed);
-            Assert.Equal(imageCount, item.GetImages(imageType).Count());
+            ValidateImages_Test(imageType, 0, true, imageCount, true, imageCount);
         }
 
         [Theory]
         [MemberData(nameof(GetImageTypesWithCount))]
         public void ValidateImages_PopulatedItemWithGoodPathsAndEmptyProviders_NoChange(ImageType imageType, int imageCount)
         {
-            var item = GetItemWithImages(imageType, imageCount, true);
-
-            var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.ValidateImages(item, new List<ILocalImageProvider>(), null);
-
-            Assert.False(changed);
-            Assert.Equal(imageCount, item.GetImages(imageType).Count());
+            ValidateImages_Test(imageType, imageCount, true, 0, false, imageCount);
         }
 
         [Theory]
         [MemberData(nameof(GetImageTypesWithCount))]
         public void ValidateImages_PopulatedItemWithBadPathsAndEmptyProviders_RemovesImage(ImageType imageType, int imageCount)
         {
-            var item = GetItemWithImages(imageType, imageCount, false);
+            ValidateImages_Test(imageType, imageCount, false, 0, true, 0);
+        }
+
+        private void ValidateImages_Test(ImageType imageType, int initialImageCount, bool initialPathsValid, int providerImageCount, bool expectedChange, int expectedImageCount)
+        {
+            var item = GetItemWithImages(imageType, initialImageCount, initialPathsValid);
+
+            var imageProvider = GetImageProvider(imageType, providerImageCount, true);
 
             var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.ValidateImages(item, new List<ILocalImageProvider>(), null);
+            var actualChange = itemImageProvider.ValidateImages(item, new[] { imageProvider }, null);
 
-            Assert.True(changed);
-            Assert.Empty(item.GetImages(imageType));
+            Assert.Equal(expectedChange, actualChange);
+            Assert.Equal(expectedImageCount, item.GetImages(imageType).Count());
         }
 
         [Fact]
         public void MergeImages_EmptyItemNewImagesEmpty_NoChange()
         {
             var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.MergeImages(new MovieWithScreenshots(), new List<LocalImageInfo>());
+            var changed = itemImageProvider.MergeImages(new Video(), Array.Empty<LocalImageInfo>(), new ImageRefreshOptions(Mock.Of<IDirectoryService>()));
 
             Assert.False(changed);
         }
@@ -123,7 +112,7 @@ namespace Jellyfin.Providers.Tests.Manager
             var images = GetImages(imageType, imageCount, false);
 
             var itemImageProvider = GetItemImageProvider(null, null);
-            var changed = itemImageProvider.MergeImages(item, images);
+            var changed = itemImageProvider.MergeImages(item, images, new ImageRefreshOptions(Mock.Of<IDirectoryService>()));
 
             Assert.True(changed);
             // adds for types that allow multiple, replaces singular type images
@@ -139,41 +128,14 @@ namespace Jellyfin.Providers.Tests.Manager
         }
 
         [Theory]
-        [MemberData(nameof(GetImageTypesWithCount))]
-        public void MergeImages_PopulatedItemWithGoodPathsAndSameNewImages_NoChange(ImageType imageType, int imageCount)
+        [InlineData(ImageType.Primary, 1, false)]
+        [InlineData(ImageType.Backdrop, 2, false)]
+        [InlineData(ImageType.Primary, 1, true)]
+        [InlineData(ImageType.Backdrop, 2, true)]
+        public void MergeImages_PopulatedItemWithGoodPathsAndSameNewImages_ResetIfTimeChanges(ImageType imageType, int imageCount, bool updateTime)
         {
             var oldTime = new DateTime(1970, 1, 1);
-
-            // match update time with time added to item images (unix epoch)
-            var fileSystem = new Mock<IFileSystem>();
-            fileSystem.Setup(fs => fs.GetLastWriteTimeUtc(It.IsAny<FileSystemMetadata>()))
-                .Returns(oldTime);
-            BaseItem.FileSystem = fileSystem.Object;
-
-            // all valid paths - matching for strictly updating
-            var item = GetItemWithImages(imageType, imageCount, true);
-            // set size to non-zero to allow for updates to occur
-            foreach (var image in item.GetImages(imageType))
-            {
-                image.DateModified = oldTime;
-                image.Height = 1;
-                image.Width = 1;
-            }
-
-            var images = GetImages(imageType, imageCount, true);
-
-            var itemImageProvider = GetItemImageProvider(null, fileSystem);
-            var changed = itemImageProvider.MergeImages(item, images);
-
-            Assert.False(changed);
-        }
-
-        [Theory]
-        [MemberData(nameof(GetImageTypesWithCount))]
-        public void MergeImages_PopulatedItemWithGoodPathsAndSameNewImagesWithNewTimestamps_ResetsImageSizes(ImageType imageType, int imageCount)
-        {
-            var oldTime = new DateTime(1970, 1, 1);
-            var updatedTime = new DateTime(2021, 1, 1);
+            var updatedTime = updateTime ? new DateTime(2021, 1, 1) : oldTime;
 
             var fileSystem = new Mock<IFileSystem>();
             fileSystem.Setup(fs => fs.GetLastWriteTimeUtc(It.IsAny<FileSystemMetadata>()))
@@ -193,27 +155,62 @@ namespace Jellyfin.Providers.Tests.Manager
             var images = GetImages(imageType, imageCount, true);
 
             var itemImageProvider = GetItemImageProvider(null, fileSystem);
-            var changed = itemImageProvider.MergeImages(item, images);
+            var changed = itemImageProvider.MergeImages(item, images, new ImageRefreshOptions(Mock.Of<IDirectoryService>()));
 
-            Assert.True(changed);
-            // before and after paths are the same, verify updated by size reset to 0
-            Assert.Equal(imageCount, item.GetImages(imageType).Count());
-            foreach (var image in item.GetImages(imageType))
+            if (updateTime)
             {
-                Assert.Equal(updatedTime, image.DateModified);
-                Assert.Equal(0, image.Height);
-                Assert.Equal(0, image.Width);
+                Assert.True(changed);
+                // before and after paths are the same, verify updated by size reset to 0
+                var typedImages = item.GetImages(imageType).ToArray();
+                Assert.Equal(imageCount, typedImages.Length);
+                foreach (var image in typedImages)
+                {
+                    Assert.Equal(updatedTime, image.DateModified);
+                    Assert.Equal(0, image.Height);
+                    Assert.Equal(0, image.Width);
+                }
             }
+            else
+            {
+                Assert.False(changed);
+            }
+        }
+
+        [Theory]
+        [InlineData(ImageType.Primary, 0)]
+        [InlineData(ImageType.Primary, 1)]
+        [InlineData(ImageType.Backdrop, 2)]
+        public void RemoveImages_DeletesImages_WhenFound(ImageType imageType, int imageCount)
+        {
+            var item = GetItemWithImages(imageType, imageCount, false);
+
+            var mockFileSystem = new Mock<IFileSystem>(MockBehavior.Strict);
+            if (imageCount > 0)
+            {
+                mockFileSystem.Setup(fs => fs.DeleteFile("invalid path 0"))
+                    .Verifiable();
+            }
+
+            if (imageCount > 1)
+            {
+                mockFileSystem.Setup(fs => fs.DeleteFile("invalid path 1"))
+                    .Verifiable();
+            }
+
+            var itemImageProvider = GetItemImageProvider(Mock.Of<IProviderManager>(), mockFileSystem);
+            var result = itemImageProvider.RemoveImages(item);
+
+            Assert.Equal(imageCount != 0, result);
+            Assert.Empty(item.GetImages(imageType));
+            mockFileSystem.Verify();
         }
 
         [Theory]
         [InlineData(ImageType.Primary, 1, false)]
         [InlineData(ImageType.Backdrop, 2, false)]
-        [InlineData(ImageType.Screenshot, 2, false)]
         [InlineData(ImageType.Primary, 1, true)]
         [InlineData(ImageType.Backdrop, 2, true)]
-        [InlineData(ImageType.Screenshot, 2, true)]
-        public async void RefreshImages_PopulatedItemPopulatedProviderDynamic_UpdatesImagesIfForced(ImageType imageType, int imageCount, bool forceRefresh)
+        public async Task RefreshImages_PopulatedItemPopulatedProviderDynamic_UpdatesImagesIfForced(ImageType imageType, int imageCount, bool forceRefresh)
         {
             var item = GetItemWithImages(imageType, imageCount, false);
 
@@ -235,11 +232,12 @@ namespace Jellyfin.Providers.Tests.Manager
                 .ReturnsAsync(imageResponse);
 
             var refreshOptions = forceRefresh
-                ? new ImageRefreshOptions(null)
+                ? new ImageRefreshOptions(Mock.Of<IDirectoryService>())
                 {
-                    ImageRefreshMode = MetadataRefreshMode.FullRefresh, ReplaceAllImages = true
+                    ImageRefreshMode = MetadataRefreshMode.FullRefresh,
+                    ReplaceAllImages = true
                 }
-                : new ImageRefreshOptions(null);
+                : new ImageRefreshOptions(Mock.Of<IDirectoryService>());
 
             var itemImageProvider = GetItemImageProvider(null, new Mock<IFileSystem>());
             var result = await itemImageProvider.RefreshImages(item, libraryOptions, new List<IImageProvider> { dynamicProvider.Object }, refreshOptions, CancellationToken.None);
@@ -264,12 +262,12 @@ namespace Jellyfin.Providers.Tests.Manager
         [InlineData(ImageType.Backdrop, 2, true, MediaProtocol.File)]
         [InlineData(ImageType.Primary, 1, false, MediaProtocol.File)]
         [InlineData(ImageType.Backdrop, 2, false, MediaProtocol.File)]
-        public async void RefreshImages_EmptyItemPopulatedProviderDynamic_AddsImages(ImageType imageType, int imageCount, bool responseHasPath, MediaProtocol protocol)
+        public async Task RefreshImages_EmptyItemPopulatedProviderDynamic_AddsImages(ImageType imageType, int imageCount, bool responseHasPath, MediaProtocol protocol)
         {
             // Has to exist for querying DateModified time on file, results stored but not checked so not populating
             BaseItem.FileSystem = Mock.Of<IFileSystem>();
 
-            var item = new MovieWithScreenshots();
+            var item = new Video();
 
             var libraryOptions = GetLibraryOptions(item, imageType, imageCount);
 
@@ -278,7 +276,7 @@ namespace Jellyfin.Providers.Tests.Manager
             {
                 HasImage = true,
                 Format = ImageFormat.Jpg,
-                Path = responseHasPath ? string.Format(CultureInfo.InvariantCulture, TestDataImagePath, 0) : null,
+                Path = responseHasPath ? string.Format(CultureInfo.InvariantCulture, _testDataImagePath, 0) : null,
                 Protocol = protocol
             };
 
@@ -289,11 +287,14 @@ namespace Jellyfin.Providers.Tests.Manager
             dynamicProvider.Setup(rp => rp.GetImage(item, imageType, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(imageResponse);
 
-            var refreshOptions = new ImageRefreshOptions(null);
+            var refreshOptions = new ImageRefreshOptions(Mock.Of<IDirectoryService>());
 
             var providerManager = new Mock<IProviderManager>(MockBehavior.Strict);
             providerManager.Setup(pm => pm.SaveImage(item, It.IsAny<Stream>(), It.IsAny<string>(), imageType, null, It.IsAny<CancellationToken>()))
                 .Callback<BaseItem, Stream, string, ImageType, int?, CancellationToken>((callbackItem, _, _, callbackType, _, _) => callbackItem.SetImagePath(callbackType, 0, new FileSystemMetadata()))
+                .Returns(Task.CompletedTask);
+            providerManager.Setup(pm => pm.SaveImage(item, It.IsAny<string>(), It.IsAny<string>(), imageType, null, null, It.IsAny<CancellationToken>()))
+                .Callback<BaseItem, string, string, ImageType, int?, bool?, CancellationToken>((callbackItem, _, _, callbackType, _, _, _) => callbackItem.SetImagePath(callbackType, 0, new FileSystemMetadata()))
                 .Returns(Task.CompletedTask);
             var itemImageProvider = GetItemImageProvider(providerManager.Object, null);
             var result = await itemImageProvider.RefreshImages(item, libraryOptions, new List<IImageProvider> { dynamicProvider.Object }, refreshOptions, CancellationToken.None);
@@ -311,12 +312,10 @@ namespace Jellyfin.Providers.Tests.Manager
         [InlineData(ImageType.Primary, 1, false)]
         [InlineData(ImageType.Backdrop, 1, false)]
         [InlineData(ImageType.Backdrop, 2, false)]
-        [InlineData(ImageType.Screenshot, 2, false)]
         [InlineData(ImageType.Primary, 1, true)]
         [InlineData(ImageType.Backdrop, 1, true)]
         [InlineData(ImageType.Backdrop, 2, true)]
-        [InlineData(ImageType.Screenshot, 2, true)]
-        public async void RefreshImages_PopulatedItemPopulatedProviderRemote_UpdatesImagesIfForced(ImageType imageType, int imageCount, bool forceRefresh)
+        public async Task RefreshImages_PopulatedItemPopulatedProviderRemote_UpdatesImagesIfForced(ImageType imageType, int imageCount, bool forceRefresh)
         {
             var item = GetItemWithImages(imageType, imageCount, false);
 
@@ -328,21 +327,21 @@ namespace Jellyfin.Providers.Tests.Manager
                 .Returns(new[] { imageType });
 
             var refreshOptions = forceRefresh
-                ? new ImageRefreshOptions(null)
+                ? new ImageRefreshOptions(Mock.Of<IDirectoryService>())
                 {
-                    ImageRefreshMode = MetadataRefreshMode.FullRefresh, ReplaceAllImages = true
+                    ImageRefreshMode = MetadataRefreshMode.FullRefresh,
+                    ReplaceAllImages = true
                 }
-                : new ImageRefreshOptions(null);
+                : new ImageRefreshOptions(Mock.Of<IDirectoryService>());
 
-            var remoteInfo = new List<RemoteImageInfo>();
+            var remoteInfo = new RemoteImageInfo[imageCount];
             for (int i = 0; i < imageCount; i++)
             {
-                remoteInfo.Add(new RemoteImageInfo
+                remoteInfo[i] = new RemoteImageInfo
                 {
                     Type = imageType,
-                    Url = "image url " + i,
-                    Width = 1 // min width is set to 0, this will always pass
-                });
+                    Url = "image url " + i
+                };
             }
 
             var providerManager = new Mock<IProviderManager>(MockBehavior.Strict);
@@ -357,11 +356,11 @@ namespace Jellyfin.Providers.Tests.Manager
             {
                 if (forceRefresh)
                 {
-                    Assert.Matches(@"image url [0-9]", image.Path);
+                    Assert.Matches("image url [0-9]", image.Path);
                 }
                 else
                 {
-                    Assert.DoesNotMatch(@"image url [0-9]", image.Path);
+                    Assert.DoesNotMatch("image url [0-9]", image.Path);
                 }
             }
         }
@@ -371,7 +370,7 @@ namespace Jellyfin.Providers.Tests.Manager
         [InlineData(ImageType.Backdrop, 0, false)] // empty item, no cache to check
         [InlineData(ImageType.Backdrop, 1, false)] // populated item, cached so no download
         [InlineData(ImageType.Backdrop, 1, true)] // populated item, forced to download
-        public async void RefreshImages_NonStubItemPopulatedProviderRemote_DownloadsIfNecessary(ImageType imageType, int initialImageCount, bool fullRefresh)
+        public async Task RefreshImages_NonStubItemPopulatedProviderRemote_DownloadsIfNecessary(ImageType imageType, int initialImageCount, bool fullRefresh)
         {
             var targetImageCount = 1;
 
@@ -383,7 +382,7 @@ namespace Jellyfin.Providers.Tests.Manager
             // seek 2 so it won't short-circuit out of downloading when populated
             var libraryOptions = GetLibraryOptions(item, imageType, 2);
 
-            var content = "Content";
+            const string Content = "Content";
             var remoteProvider = new Mock<IRemoteImageProvider>(MockBehavior.Strict);
             remoteProvider.Setup(rp => rp.Name).Returns("MockRemoteProvider");
             remoteProvider.Setup(rp => rp.GetSupportedImages(item))
@@ -393,26 +392,25 @@ namespace Jellyfin.Providers.Tests.Manager
                 {
                     ReasonPhrase = url,
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent(content, Encoding.UTF8, "image/jpeg")
+                    Content = new StringContent(Content, Encoding.UTF8, MediaTypeNames.Image.Jpeg)
                 });
 
             var refreshOptions = fullRefresh
-                ? new ImageRefreshOptions(null)
+                ? new ImageRefreshOptions(Mock.Of<IDirectoryService>())
                 {
                     ImageRefreshMode = MetadataRefreshMode.FullRefresh,
                     ReplaceAllImages = true
                 }
-                : new ImageRefreshOptions(null);
+                : new ImageRefreshOptions(Mock.Of<IDirectoryService>());
 
-            var remoteInfo = new List<RemoteImageInfo>();
+            var remoteInfo = new RemoteImageInfo[targetImageCount];
             for (int i = 0; i < targetImageCount; i++)
             {
-                remoteInfo.Add(new RemoteImageInfo
+                remoteInfo[i] = new RemoteImageInfo
                 {
                     Type = imageType,
-                    Url = "image url " + i,
-                    Width = 1 // min width is set to 0, this will always pass
-                });
+                    Url = "image url " + i
+                };
             }
 
             var providerManager = new Mock<IProviderManager>(MockBehavior.Strict);
@@ -425,7 +423,7 @@ namespace Jellyfin.Providers.Tests.Manager
             var fileSystem = new Mock<IFileSystem>();
             // match reported file size to image content length - condition for skipping already downloaded multi-images
             fileSystem.Setup(fs => fs.GetFileInfo(It.IsAny<string>()))
-                .Returns(new FileSystemMetadata { Length = content.Length });
+                .Returns(new FileSystemMetadata { Length = Content.Length });
             var itemImageProvider = GetItemImageProvider(providerManager.Object, fileSystem);
             var result = await itemImageProvider.RefreshImages(item, libraryOptions, new List<IImageProvider> { remoteProvider.Object }, refreshOptions, CancellationToken.None);
 
@@ -435,9 +433,9 @@ namespace Jellyfin.Providers.Tests.Manager
 
         [Theory]
         [MemberData(nameof(GetImageTypesWithCount))]
-        public async void RefreshImages_EmptyItemPopulatedProviderRemoteExtras_LimitsImages(ImageType imageType, int imageCount)
+        public async Task RefreshImages_EmptyItemPopulatedProviderRemoteExtras_LimitsImages(ImageType imageType, int imageCount)
         {
-            var item = new MovieWithScreenshots();
+            var item = new Video();
 
             var libraryOptions = GetLibraryOptions(item, imageType, imageCount);
 
@@ -446,18 +444,18 @@ namespace Jellyfin.Providers.Tests.Manager
             remoteProvider.Setup(rp => rp.GetSupportedImages(item))
                 .Returns(new[] { imageType });
 
-            var refreshOptions = new ImageRefreshOptions(null);
+            var refreshOptions = new ImageRefreshOptions(Mock.Of<IDirectoryService>());
 
             // populate remote with double the required images to verify count is trimmed to the library option count
-            var remoteInfo = new List<RemoteImageInfo>();
-            for (int i = 0; i < imageCount * 2; i++)
+            var remoteInfoCount = imageCount * 2;
+            var remoteInfo = new RemoteImageInfo[remoteInfoCount];
+            for (int i = 0; i < remoteInfoCount; i++)
             {
-                remoteInfo.Add(new RemoteImageInfo
+                remoteInfo[i] = new RemoteImageInfo
                 {
                     Type = imageType,
-                    Url = "image url " + i,
-                    Width = 1 // min width is set to 0, this will always pass
-                });
+                    Url = "image url " + i
+                };
             }
 
             var providerManager = new Mock<IProviderManager>(MockBehavior.Strict);
@@ -472,14 +470,14 @@ namespace Jellyfin.Providers.Tests.Manager
             // images from the provider manager are sorted by preference (earlier images are higher priority) so we can verify that low url numbers are chosen
             foreach (var image in actualImages)
             {
-                var index = int.Parse(Regex.Match(image.Path, @"[0-9]+").Value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+                var index = int.Parse(NumbersRegex().Match(image.Path).ValueSpan, NumberStyles.Integer, CultureInfo.InvariantCulture);
                 Assert.True(index < imageCount);
             }
         }
 
         [Theory]
         [MemberData(nameof(GetImageTypesWithCount))]
-        public async void RefreshImages_PopulatedItemEmptyProviderRemoteFullRefresh_DoesntClearImages(ImageType imageType, int imageCount)
+        public async Task RefreshImages_PopulatedItemEmptyProviderRemoteFullRefresh_DoesntClearImages(ImageType imageType, int imageCount)
         {
             var item = GetItemWithImages(imageType, imageCount, false);
 
@@ -490,7 +488,7 @@ namespace Jellyfin.Providers.Tests.Manager
             remoteProvider.Setup(rp => rp.GetSupportedImages(item))
                 .Returns(new[] { imageType });
 
-            var refreshOptions = new ImageRefreshOptions(null)
+            var refreshOptions = new ImageRefreshOptions(Mock.Of<IDirectoryService>())
             {
                 ImageRefreshMode = MetadataRefreshMode.FullRefresh,
                 ReplaceAllImages = true
@@ -503,6 +501,62 @@ namespace Jellyfin.Providers.Tests.Manager
             Assert.Equal(imageCount, item.GetImages(imageType).Count());
         }
 
+        [Theory]
+        [InlineData(9, false)]
+        [InlineData(10, true)]
+        [InlineData(null, true)]
+        public async Task RefreshImages_ProviderRemote_FiltersByWidth(int? remoteImageWidth, bool expectedToUpdate)
+        {
+            var imageType = ImageType.Primary;
+
+            var item = new Video();
+
+            var libraryOptions = new LibraryOptions
+            {
+                TypeOptions = new[]
+                {
+                    new TypeOptions
+                    {
+                        Type = item.GetType().Name,
+                        ImageOptions = new[]
+                        {
+                            new ImageOption
+                            {
+                                Type = imageType,
+                                MinWidth = 10
+                            }
+                        }
+                    }
+                }
+            };
+
+            var remoteProvider = new Mock<IRemoteImageProvider>(MockBehavior.Strict);
+            remoteProvider.Setup(rp => rp.Name).Returns("MockRemoteProvider");
+            remoteProvider.Setup(rp => rp.GetSupportedImages(item))
+                .Returns(new[] { imageType });
+
+            var refreshOptions = new ImageRefreshOptions(Mock.Of<IDirectoryService>());
+
+            // set width on image from remote
+            var remoteInfo = new[]
+            {
+                new RemoteImageInfo()
+                {
+                    Type = imageType,
+                    Url = "image url",
+                    Width = remoteImageWidth
+                }
+            };
+
+            var providerManager = new Mock<IProviderManager>(MockBehavior.Strict);
+            providerManager.Setup(pm => pm.GetAvailableRemoteImages(It.IsAny<BaseItem>(), It.IsAny<RemoteImageQuery>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(remoteInfo);
+            var itemImageProvider = GetItemImageProvider(providerManager.Object, null);
+            var result = await itemImageProvider.RefreshImages(item, libraryOptions, new List<IImageProvider> { remoteProvider.Object }, refreshOptions, CancellationToken.None);
+
+            Assert.Equal(expectedToUpdate, result.UpdateType.HasFlag(ItemUpdateType.ImageUpdate));
+        }
+
         private static ItemImageProvider GetItemImageProvider(IProviderManager? providerManager, Mock<IFileSystem>? mockFileSystem)
         {
             // strict to ensure this isn't accidentally used where a prepared mock is intended
@@ -513,30 +567,35 @@ namespace Jellyfin.Providers.Tests.Manager
             mockFileSystem.Setup(fs => fs.GetFilePaths(It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns(new[]
                 {
-                    string.Format(CultureInfo.InvariantCulture, TestDataImagePath, 0),
-                    string.Format(CultureInfo.InvariantCulture, TestDataImagePath, 1)
+                    string.Format(CultureInfo.InvariantCulture, _testDataImagePath, 0),
+                    string.Format(CultureInfo.InvariantCulture, _testDataImagePath, 1)
                 });
 
             return new ItemImageProvider(new NullLogger<ItemImageProvider>(), providerManager, mockFileSystem.Object);
         }
 
-        private static BaseItem GetItemWithImages(ImageType type, int count, bool validPaths)
+        private static Video GetItemWithImages(ImageType type, int count, bool validPaths)
         {
             // Has to exist for querying DateModified time on file, results stored but not checked so not populating
             BaseItem.FileSystem ??= Mock.Of<IFileSystem>();
 
-            var item = new MovieWithScreenshots();
+            var item = new Mock<Video>
+            {
+                CallBase = true
+            };
+            item.Setup(m => m.IsSaveLocalMetadataEnabled()).Returns(false);
+            item.Setup(m => m.GetInternalMetadataPath()).Returns(string.Empty);
 
-            var path = validPaths ? TestDataImagePath : "invalid path {0}";
+            var path = validPaths ? _testDataImagePath.Format : "invalid path {0}";
             for (int i = 0; i < count; i++)
             {
-                item.SetImagePath(type, i, new FileSystemMetadata
+                item.Object.SetImagePath(type, i, new FileSystemMetadata
                 {
                     FullName = string.Format(CultureInfo.InvariantCulture, path, i),
                 });
             }
 
-            return item;
+            return item.Object;
         }
 
         private static ILocalImageProvider GetImageProvider(ImageType type, int count, bool validPaths)
@@ -552,20 +611,20 @@ namespace Jellyfin.Providers.Tests.Manager
         /// <summary>
         /// Creates a list of <see cref="LocalImageInfo"/> references of the specified type and size, optionally pointing to files that exist.
         /// </summary>
-        private static List<LocalImageInfo> GetImages(ImageType type, int count, bool validPaths)
+        private static LocalImageInfo[] GetImages(ImageType type, int count, bool validPaths)
         {
-            var path = validPaths ? TestDataImagePath : "invalid path {0}";
-            var images = new List<LocalImageInfo>(count);
+            var path = validPaths ? _testDataImagePath.Format : "invalid path {0}";
+            var images = new LocalImageInfo[count];
             for (int i = 0; i < count; i++)
             {
-                images.Add(new LocalImageInfo
+                images[i] = new LocalImageInfo
                 {
                     Type = type,
                     FileInfo = new FileSystemMetadata
                     {
                         FullName = string.Format(CultureInfo.InvariantCulture, path, i)
                     }
-                });
+                };
             }
 
             return images;
@@ -589,18 +648,11 @@ namespace Jellyfin.Providers.Tests.Manager
                             {
                                 Type = type,
                                 Limit = count,
-                                MinWidth = 0
                             }
                         }
                     }
                 }
             };
-        }
-
-        // Create a class that implements IHasScreenshots for testing since no BaseItem class is also IHasScreenshots
-        private class MovieWithScreenshots : Movie, IHasScreenshots
-        {
-            // No contents
         }
     }
 }

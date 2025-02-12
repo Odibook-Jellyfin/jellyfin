@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -25,7 +26,7 @@ namespace Emby.Server.Implementations.Localization
         private const string CulturesPath = "Emby.Server.Implementations.Localization.iso6392.txt";
         private const string CountriesPath = "Emby.Server.Implementations.Localization.countries.json";
         private static readonly Assembly _assembly = typeof(LocalizationManager).Assembly;
-        private static readonly string[] _unratedValues = { "n/a", "unrated", "not rated" };
+        private static readonly string[] _unratedValues = { "n/a", "unrated", "not rated", "nr" };
 
         private readonly IServerConfigurationManager _configurationManager;
         private readonly ILogger<LocalizationManager> _logger;
@@ -70,28 +71,29 @@ namespace Emby.Server.Implementations.Localization
                 string countryCode = resource.Substring(RatingsPath.Length, 2);
                 var dict = new Dictionary<string, ParentalRating>(StringComparer.OrdinalIgnoreCase);
 
-                await using var stream = _assembly.GetManifestResourceStream(resource);
-                using var reader = new StreamReader(stream!); // shouldn't be null here, we just got the resource path from Assembly.GetManifestResourceNames()
-                await foreach (var line in reader.ReadAllLinesAsync().ConfigureAwait(false))
+                var stream = _assembly.GetManifestResourceStream(resource);
+                await using (stream!.ConfigureAwait(false)) // shouldn't be null here, we just got the resource path from Assembly.GetManifestResourceNames()
                 {
-                    if (string.IsNullOrWhiteSpace(line))
+                    using var reader = new StreamReader(stream!);
+                    await foreach (var line in reader.ReadAllLinesAsync().ConfigureAwait(false))
                     {
-                        continue;
-                    }
+                        if (string.IsNullOrWhiteSpace(line))
+                        {
+                            continue;
+                        }
 
-                    string[] parts = line.Split(',');
-                    if (parts.Length == 2
-                        && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
-                    {
-                        var name = parts[0];
-                        dict.Add(name, new ParentalRating(name, value));
+                        string[] parts = line.Split(',');
+                        if (parts.Length == 2
+                            && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+                        {
+                            var name = parts[0];
+                            dict.Add(name, new ParentalRating(name, value));
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Malformed line in ratings file for country {CountryCode}", countryCode);
+                        }
                     }
-#if DEBUG
-                    else
-                    {
-                        _logger.LogWarning("Malformed line in ratings file for country {CountryCode}", countryCode);
-                    }
-#endif
                 }
 
                 _allParentalRatings[countryCode] = dict;
@@ -147,13 +149,7 @@ namespace Emby.Server.Implementations.Localization
                         threeletterNames = new[] { parts[0], parts[1] };
                     }
 
-                    list.Add(new CultureDto
-                    {
-                        DisplayName = name,
-                        Name = name,
-                        ThreeLetterISOLanguageNames = threeletterNames,
-                        TwoLetterISOLanguageName = twoCharName
-                    });
+                    list.Add(new CultureDto(name, name, twoCharName, threeletterNames));
                 }
             }
 
@@ -190,83 +186,164 @@ namespace Emby.Server.Implementations.Localization
 
         /// <inheritdoc />
         public IEnumerable<ParentalRating> GetParentalRatings()
-            => GetParentalRatingsDictionary().Values;
+        {
+            // Use server default language for ratings
+            // Fall back to empty list if there are no parental ratings for that language
+            var ratings = GetParentalRatingsDictionary()?.Values.ToList()
+                ?? new List<ParentalRating>();
+
+            // Add common ratings to ensure them being available for selection
+            // Based on the US rating system due to it being the main source of rating in the metadata providers
+            // Unrated
+            if (!ratings.Any(x => x.Value is null))
+            {
+                ratings.Add(new ParentalRating("Unrated", null));
+            }
+
+            // Minimum rating possible
+            if (ratings.All(x => x.Value != 0))
+            {
+                ratings.Add(new ParentalRating("Approved", 0));
+            }
+
+            // Matches PG (this has different age restrictions depending on country)
+            if (ratings.All(x => x.Value != 10))
+            {
+                ratings.Add(new ParentalRating("10", 10));
+            }
+
+            // Matches PG-13
+            if (ratings.All(x => x.Value != 13))
+            {
+                ratings.Add(new ParentalRating("13", 13));
+            }
+
+            // Matches TV-14
+            if (ratings.All(x => x.Value != 14))
+            {
+                ratings.Add(new ParentalRating("14", 14));
+            }
+
+            // Catchall if max rating of country is less than 21
+            // Using 21 instead of 18 to be sure to allow access to all rated content except adult and banned
+            if (!ratings.Any(x => x.Value >= 21))
+            {
+                ratings.Add(new ParentalRating("21", 21));
+            }
+
+            // A lot of countries don't explicitly have a separate rating for adult content
+            if (ratings.All(x => x.Value != 1000))
+            {
+                ratings.Add(new ParentalRating("XXX", 1000));
+            }
+
+            // A lot of countries don't explicitly have a separate rating for banned content
+            if (ratings.All(x => x.Value != 1001))
+            {
+                ratings.Add(new ParentalRating("Banned", 1001));
+            }
+
+            return ratings.OrderBy(r => r.Value);
+        }
 
         /// <summary>
         /// Gets the parental ratings dictionary.
         /// </summary>
+        /// <param name="countryCode">The optional two letter ISO language string.</param>
         /// <returns><see cref="Dictionary{String, ParentalRating}" />.</returns>
-        private Dictionary<string, ParentalRating> GetParentalRatingsDictionary()
+        private Dictionary<string, ParentalRating>? GetParentalRatingsDictionary(string? countryCode = null)
         {
-            var countryCode = _configurationManager.Configuration.MetadataCountryCode;
-
+            // Fallback to server default if no country code is specified.
             if (string.IsNullOrEmpty(countryCode))
             {
-                countryCode = "us";
+                countryCode = _configurationManager.Configuration.MetadataCountryCode;
             }
 
-            return GetRatings(countryCode)
-                ?? GetRatings("us")
-                ?? throw new InvalidOperationException($"Invalid resource path: '{CountriesPath}'");
-        }
+            if (_allParentalRatings.TryGetValue(countryCode, out var countryValue))
+            {
+                return countryValue;
+            }
 
-        /// <summary>
-        /// Gets the ratings.
-        /// </summary>
-        /// <param name="countryCode">The country code.</param>
-        /// <returns>The ratings.</returns>
-        private Dictionary<string, ParentalRating>? GetRatings(string countryCode)
-        {
-            _allParentalRatings.TryGetValue(countryCode, out var value);
-
-            return value;
+            return null;
         }
 
         /// <inheritdoc />
-        public int? GetRatingLevel(string rating)
+        public int? GetRatingLevel(string rating, string? countryCode = null)
         {
-            if (string.IsNullOrEmpty(rating))
-            {
-                throw new ArgumentNullException(nameof(rating));
-            }
+            ArgumentException.ThrowIfNullOrEmpty(rating);
 
+            // Handle unrated content
             if (_unratedValues.Contains(rating.AsSpan(), StringComparison.OrdinalIgnoreCase))
             {
                 return null;
             }
 
-            // Fairly common for some users to have "Rated R" in their rating field
-            rating = rating.Replace("Rated ", string.Empty, StringComparison.OrdinalIgnoreCase);
-
-            var ratingsDictionary = GetParentalRatingsDictionary();
-
-            if (ratingsDictionary.TryGetValue(rating, out ParentalRating? value))
+            // Convert integers directly
+            // This may override some of the locale specific age ratings (but those always map to the same age)
+            if (int.TryParse(rating, out var ratingAge))
             {
-                return value.Value;
+                return ratingAge;
             }
 
-            // If we don't find anything check all ratings systems
-            foreach (var dictionary in _allParentalRatings.Values)
+            // Fairly common for some users to have "Rated R" in their rating field
+            rating = rating.Replace("Rated :", string.Empty, StringComparison.OrdinalIgnoreCase);
+            rating = rating.Replace("Rated ", string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            // Use rating system matching the language
+            if (!string.IsNullOrEmpty(countryCode))
             {
-                if (dictionary.TryGetValue(rating, out value))
+                var ratingsDictionary = GetParentalRatingsDictionary(countryCode);
+                if (ratingsDictionary is not null && ratingsDictionary.TryGetValue(rating, out ParentalRating? value))
+                {
+                    return value.Value;
+                }
+            }
+            else
+            {
+                // Fall back to server default language for ratings check
+                // If it has no ratings, use the US ratings
+                var ratingsDictionary = GetParentalRatingsDictionary() ?? GetParentalRatingsDictionary("us");
+                if (ratingsDictionary is not null && ratingsDictionary.TryGetValue(rating, out ParentalRating? value))
                 {
                     return value.Value;
                 }
             }
 
-            // Try splitting by : to handle "Germany: FSK 18"
-            var index = rating.IndexOf(':', StringComparison.Ordinal);
-            if (index != -1)
+            // If we don't find anything, check all ratings systems
+            foreach (var dictionary in _allParentalRatings.Values)
             {
-                var trimmedRating = rating.AsSpan(index).TrimStart(':').Trim();
-
-                if (!trimmedRating.IsEmpty)
+                if (dictionary.TryGetValue(rating, out var value))
                 {
-                    return GetRatingLevel(trimmedRating.ToString());
+                    return value.Value;
                 }
             }
 
-            // TODO: Further improve by normalizing out all spaces and dashes
+            // Try splitting by : to handle "Germany: FSK-18"
+            if (rating.Contains(':', StringComparison.OrdinalIgnoreCase))
+            {
+                var ratingLevelRightPart = rating.AsSpan().RightPart(':');
+                if (ratingLevelRightPart.Length != 0)
+                {
+                    return GetRatingLevel(ratingLevelRightPart.ToString());
+                }
+            }
+
+            // Handle prefix country code to handle "DE-18"
+            if (rating.Contains('-', StringComparison.OrdinalIgnoreCase))
+            {
+                var ratingSpan = rating.AsSpan();
+
+                // Extract culture from country prefix
+                var culture = FindLanguageInfo(ratingSpan.LeftPart('-').ToString());
+
+                var ratingLevelRightPart = ratingSpan.RightPart('-');
+                if (ratingLevelRightPart.Length != 0)
+                {
+                    // Check rating system of culture
+                    return GetRatingLevel(ratingLevelRightPart.ToString(), culture?.TwoLetterISOLanguageName);
+                }
+            }
+
             return null;
         }
 
@@ -301,25 +378,19 @@ namespace Emby.Server.Implementations.Localization
 
         private Dictionary<string, string> GetLocalizationDictionary(string culture)
         {
-            if (string.IsNullOrEmpty(culture))
-            {
-                throw new ArgumentNullException(nameof(culture));
-            }
+            ArgumentException.ThrowIfNullOrEmpty(culture);
 
             const string Prefix = "Core";
 
             return _dictionaries.GetOrAdd(
                 culture,
-                (key, localizationManager) => localizationManager.GetDictionary(Prefix, key, DefaultCulture + ".json").GetAwaiter().GetResult(),
+                static (key, localizationManager) => localizationManager.GetDictionary(Prefix, key, DefaultCulture + ".json").GetAwaiter().GetResult(),
                 this);
         }
 
         private async Task<Dictionary<string, string>> GetDictionary(string prefix, string culture, string baseFilename)
         {
-            if (string.IsNullOrEmpty(culture))
-            {
-                throw new ArgumentNullException(nameof(culture));
-            }
+            ArgumentException.ThrowIfNullOrEmpty(culture);
 
             var dictionary = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -335,14 +406,14 @@ namespace Emby.Server.Implementations.Localization
         {
             await using var stream = _assembly.GetManifestResourceStream(resourcePath);
             // If a Culture doesn't have a translation the stream will be null and it defaults to en-us further up the chain
-            if (stream == null)
+            if (stream is null)
             {
                 _logger.LogError("Missing translation/culture resource: {ResourcePath}", resourcePath);
                 return;
             }
 
             var dict = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(stream, _jsonOptions).ConfigureAwait(false);
-            if (dict == null)
+            if (dict is null)
             {
                 throw new InvalidOperationException($"Resource contains invalid data: '{stream}'");
             }
@@ -373,60 +444,76 @@ namespace Emby.Server.Implementations.Localization
         public IEnumerable<LocalizationOption> GetLocalizationOptions()
         {
             yield return new LocalizationOption("Afrikaans", "af");
-            yield return new LocalizationOption("Arabic", "ar");
-            yield return new LocalizationOption("Bulgarian (Bulgaria)", "bg-BG");
-            yield return new LocalizationOption("Catalan", "ca");
-            yield return new LocalizationOption("Chinese (Hong Kong)", "zh-HK");
-            yield return new LocalizationOption("Chinese Simplified", "zh-CN");
-            yield return new LocalizationOption("Chinese Traditional", "zh-TW");
-            yield return new LocalizationOption("Croatian", "hr");
-            yield return new LocalizationOption("Czech", "cs");
-            yield return new LocalizationOption("Danish", "da");
-            yield return new LocalizationOption("Dutch", "nl");
+            yield return new LocalizationOption("العربية", "ar");
+            yield return new LocalizationOption("Беларуская", "be");
+            yield return new LocalizationOption("Български", "bg-BG");
+            yield return new LocalizationOption("বাংলা (বাংলাদেশ)", "bn");
+            yield return new LocalizationOption("Català", "ca");
+            yield return new LocalizationOption("Čeština", "cs");
+            yield return new LocalizationOption("Cymraeg", "cy");
+            yield return new LocalizationOption("Dansk", "da");
+            yield return new LocalizationOption("Deutsch", "de");
             yield return new LocalizationOption("English (United Kingdom)", "en-GB");
-            yield return new LocalizationOption("English (United States)", "en-US");
+            yield return new LocalizationOption("English", "en-US");
+            yield return new LocalizationOption("Ελληνικά", "el");
             yield return new LocalizationOption("Esperanto", "eo");
-            yield return new LocalizationOption("Estonian", "et");
-            yield return new LocalizationOption("Finnish", "fi");
-            yield return new LocalizationOption("French", "fr");
-            yield return new LocalizationOption("French (Canada)", "fr-CA");
-            yield return new LocalizationOption("German", "de");
-            yield return new LocalizationOption("Greek", "el");
-            yield return new LocalizationOption("Hebrew", "he");
-            yield return new LocalizationOption("Hungarian", "hu");
-            yield return new LocalizationOption("Icelandic", "is");
-            yield return new LocalizationOption("Indonesian", "id");
-            yield return new LocalizationOption("Italian", "it");
-            yield return new LocalizationOption("Japanese", "ja");
-            yield return new LocalizationOption("Kazakh", "kk");
-            yield return new LocalizationOption("Korean", "ko");
-            yield return new LocalizationOption("Latvian", "lv");
-            yield return new LocalizationOption("Lithuanian", "lt-LT");
-            yield return new LocalizationOption("Malay", "ms");
-            yield return new LocalizationOption("Malayalam", "ml");
-            yield return new LocalizationOption("Norwegian Bokmål", "nb");
-            yield return new LocalizationOption("Norwegian Nynorsk", "nn");
-            yield return new LocalizationOption("Persian", "fa");
-            yield return new LocalizationOption("Polish", "pl");
-            yield return new LocalizationOption("Portuguese", "pt");
-            yield return new LocalizationOption("Portuguese (Brazil)", "pt-BR");
-            yield return new LocalizationOption("Portuguese (Portugal)", "pt-PT");
-            yield return new LocalizationOption("Romanian", "ro");
-            yield return new LocalizationOption("Russian", "ru");
-            yield return new LocalizationOption("Serbian", "sr");
-            yield return new LocalizationOption("Slovak", "sk");
-            yield return new LocalizationOption("Slovenian (Slovenia)", "sl-SI");
-            yield return new LocalizationOption("Spanish", "es");
-            yield return new LocalizationOption("Spanish (Argentina)", "es-AR");
-            yield return new LocalizationOption("Spanish (Latin America)", "es-419");
-            yield return new LocalizationOption("Spanish (Mexico)", "es-MX");
-            yield return new LocalizationOption("Swedish", "sv");
-            yield return new LocalizationOption("Swiss German", "gsw");
-            yield return new LocalizationOption("Tamil", "ta");
-            yield return new LocalizationOption("Telugu", "te");
-            yield return new LocalizationOption("Turkish", "tr");
+            yield return new LocalizationOption("Español", "es");
+            yield return new LocalizationOption("Español americano", "es_419");
+            yield return new LocalizationOption("Español (Argentina)", "es-AR");
+            yield return new LocalizationOption("Español (Dominicana)", "es_DO");
+            yield return new LocalizationOption("Español (México)", "es-MX");
+            yield return new LocalizationOption("Eesti", "et");
+            yield return new LocalizationOption("Basque", "eu");
+            yield return new LocalizationOption("فارسی", "fa");
+            yield return new LocalizationOption("Suomi", "fi");
+            yield return new LocalizationOption("Filipino", "fil");
+            yield return new LocalizationOption("Français", "fr");
+            yield return new LocalizationOption("Français (Canada)", "fr-CA");
+            yield return new LocalizationOption("Galego", "gl");
+            yield return new LocalizationOption("Schwiizerdütsch", "gsw");
+            yield return new LocalizationOption("עִבְרִית", "he");
+            yield return new LocalizationOption("हिन्दी", "hi");
+            yield return new LocalizationOption("Hrvatski", "hr");
+            yield return new LocalizationOption("Magyar", "hu");
+            yield return new LocalizationOption("Bahasa Indonesia", "id");
+            yield return new LocalizationOption("Íslenska", "is");
+            yield return new LocalizationOption("Italiano", "it");
+            yield return new LocalizationOption("日本語", "ja");
+            yield return new LocalizationOption("Qazaqşa", "kk");
+            yield return new LocalizationOption("한국어", "ko");
+            yield return new LocalizationOption("Lietuvių", "lt");
+            yield return new LocalizationOption("Latviešu", "lv");
+            yield return new LocalizationOption("Македонски", "mk");
+            yield return new LocalizationOption("മലയാളം", "ml");
+            yield return new LocalizationOption("मराठी", "mr");
+            yield return new LocalizationOption("Bahasa Melayu", "ms");
+            yield return new LocalizationOption("Norsk bokmål", "nb");
+            yield return new LocalizationOption("नेपाली", "ne");
+            yield return new LocalizationOption("Nederlands", "nl");
+            yield return new LocalizationOption("Norsk nynorsk", "nn");
+            yield return new LocalizationOption("ਪੰਜਾਬੀ", "pa");
+            yield return new LocalizationOption("Polski", "pl");
+            yield return new LocalizationOption("Pirate", "pr");
+            yield return new LocalizationOption("Português", "pt");
+            yield return new LocalizationOption("Português (Brasil)", "pt-BR");
+            yield return new LocalizationOption("Português (Portugal)", "pt-PT");
+            yield return new LocalizationOption("Românește", "ro");
+            yield return new LocalizationOption("Русский", "ru");
+            yield return new LocalizationOption("Slovenčina", "sk");
+            yield return new LocalizationOption("Slovenščina", "sl-SI");
+            yield return new LocalizationOption("Shqip", "sq");
+            yield return new LocalizationOption("Српски", "sr");
+            yield return new LocalizationOption("Svenska", "sv");
+            yield return new LocalizationOption("தமிழ்", "ta");
+            yield return new LocalizationOption("తెలుగు", "te");
+            yield return new LocalizationOption("ภาษาไทย", "th");
+            yield return new LocalizationOption("Türkçe", "tr");
+            yield return new LocalizationOption("Українська", "uk");
+            yield return new LocalizationOption("اُردُو", "ur_PK");
             yield return new LocalizationOption("Tiếng Việt", "vi");
-            yield return new LocalizationOption("Ukrainian", "uk");
+            yield return new LocalizationOption("汉语 (简体字)", "zh-CN");
+            yield return new LocalizationOption("漢語 (繁體字)", "zh-TW");
+            yield return new LocalizationOption("廣東話 (香港)", "zh-HK");
         }
     }
 }
